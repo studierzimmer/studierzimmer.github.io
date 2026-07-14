@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GBRLD.SPACE</title>
+    <meta name="description" content="GBRLD.SPACE" />
+    <meta name="author" content="GBRLD.SPACE" />
+    <meta property="og:title" content="GBRLD.SPACE" />
+    <meta property="og:description" content="GBRLD.SPACE" />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <style>
+      @font-face {
+        font-family: 'SuisseIntl';
+        src: url('/fonts/SuisseIntl-Regular.woff') format('woff');
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      @font-face {
+        font-family: 'SuisseIntl';
+        src: url('/fonts/suisse-intl-medium.ttf') format('truetype');
+        font-weight: 300;
+        font-style: light;
+        font-display: swap;
+      }
+
+      body {
+        font-family: 'SuisseIntl', sans-serif;
+        letter-spacing: 0.05em;
+        scroll-behavior: smooth;
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE and Edge */
+        overflow: hidden;
+        touch-action: none;
+        height: 100vh;
+      }
+
+      body::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
+      }
+
+      .scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Edge */
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;     /* Firefox */
+}
+
+/* Remove focus outline and highlight from search input */
+input.search-input:focus {
+  outline: none !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+}
+    </style>
+  </head>
+  <body class="overflow-scroll scrollbar-hide">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+.vite
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env.local
+.env.*.local
+
+# Local Supabase and macOS state
+supabase/.temp/
+
+# Unused local source assets kept outside the deployed bundle
+/404.html
+/foam.png
+/moon.jpg
+/hosts
+/waternormals.jpeg
+/fonts/SuisseIntl-Bold.woff
+/fonts/SuisseIntl-Light.woff
+/src/Suisse Int'l Bold.woff
+/src/SuisseIntl-Light.woff
+/src/SuisseIntl-Regular.woff
+/src/pages/AkzidenzGroteskPro-Regular_1.ttf
+/src/Portrait/Wolfy.gif
+/src/waternormals.jpeg
+/public/island.glb
+/public/islandold.glb
+/public/images.jpeg
+/public/favicon.jpg
