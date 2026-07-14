@@ -11,6 +11,10 @@ const unusedPublicArtifacts = [
   "islandold.glb",
 ];
 
+// Vite does not always remove hidden directories from a previous output.
+// Never let stale repository metadata or ignore rules leak into a deployment.
+await rm(resolve(outputDirectory, ".git"), { recursive: true, force: true });
+
 await Promise.all(
   unusedPublicArtifacts.map((fileName) =>
     rm(resolve(outputDirectory, fileName), { force: true })
