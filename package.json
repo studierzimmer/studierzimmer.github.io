@@ -18,7 +18,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "predeploy": "npm run build && node scripts/prepare-deploy.mjs",
-    "deploy": "gh-pages -d dist -t --nojekyll --before-add scripts/gh-pages-before-add.cjs -r https://github.com/studierzimmer/studierzimmer.github.io.git"
+    "deploy": "gh-pages -d dist -t --nojekyll --before-add ./scripts/gh-pages-before-add.cjs -r https://github.com/studierzimmer/studierzimmer.github.io.git"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
