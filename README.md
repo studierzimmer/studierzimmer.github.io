@@ -35,6 +35,18 @@ npm run predeploy
 unused public artifacts, and adds the GitHub Pages files required for SPA
 routing.
 
+## STEP / STP model imports
+
+Authenticated administrators can upload GLB, STL, STEP, or STP files from the
+3D model manager. STEP files are tessellated locally with OpenCascade
+WebAssembly, converted to a GLB preview, and stored with the original CAD file
+in the private Supabase model bucket. Public visitors receive only the signed
+GLB preview.
+
+Before the first STEP upload, apply
+`supabase/migrations/20260715020000_add_step_model_sources.sql` in the Supabase
+SQL editor or with `supabase db push`.
+
 ## Supabase contact function
 
 Configure these Supabase function secrets before deploying the contact

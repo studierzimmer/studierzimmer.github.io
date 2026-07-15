@@ -49,6 +49,103 @@ const BOOK_BACKGROUND_MIX_DURATION = 1180;
 const BOOK_VIEWER_READY_TIMEOUT = 1800;
 
 const libraryStyles = `
+.public-book-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.public-book-nav {
+  left: max(12px, env(safe-area-inset-left));
+  top: max(12px, env(safe-area-inset-top));
+  gap: clamp(5px, 1.8vw, 8px);
+  max-width: calc(100vw - 24px);
+}
+
+.public-book-nav-icon {
+  width: clamp(42px, 12vw, 48px);
+  height: clamp(42px, 12vw, 48px);
+}
+
+.public-book-nav-text {
+  height: clamp(42px, 12vw, 48px);
+  padding-inline: clamp(12px, 3.8vw, 16px);
+}
+
+.public-book-main {
+  padding-top: calc(env(safe-area-inset-top) + 5.25rem);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.9rem);
+}
+
+.public-book-viewport {
+  width: min(96vw, 1400px);
+  height: min(74dvh, 850px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 13rem));
+  min-height: 220px;
+}
+
+.public-book-title {
+  margin-top: clamp(14px, 4dvh, 5rem);
+}
+
+.public-book-description {
+  margin-top: clamp(8px, 2dvh, 1.25rem);
+}
+
+@media (max-width: 380px), (max-height: 700px) {
+  .public-book-nav {
+    left: 50%;
+    top: max(8px, env(safe-area-inset-top));
+    transform: translateX(-50%);
+    gap: clamp(4px, 1.4vw, 6px);
+    max-width: calc(100vw - 12px);
+  }
+
+  .public-book-nav-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .public-book-nav-text {
+    height: 40px;
+    padding-inline: 11px;
+    font-size: 12px;
+  }
+
+  .public-book-main {
+    padding-top: calc(env(safe-area-inset-top) + 4.3rem);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 0.55rem);
+  }
+
+  .public-book-viewport {
+    width: min(94vw, 1400px);
+    height: min(66dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9.5rem));
+    min-height: 190px;
+  }
+
+  .public-book-title,
+  .public-book-description {
+    font-size: 14px;
+  }
+
+  .public-book-label-wrap {
+    display: none;
+  }
+
+  .public-book-balloon {
+    top: calc(env(safe-area-inset-top) + 3.8rem);
+    max-height: calc(100dvh - env(safe-area-inset-top) - 4.5rem);
+  }
+}
+
+@media (max-height: 520px) {
+  .public-book-description {
+    display: none;
+  }
+
+  .public-book-title {
+    margin-top: 8px;
+  }
+}
+
 .public-book-scroll {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -993,7 +1090,7 @@ export default function PublicBookLibrary({
 
   return (
     <div
-      className="fixed inset-0 z-[90] isolate overflow-hidden bg-white text-black"
+      className="public-book-shell fixed inset-x-0 top-0 z-[90] isolate overflow-hidden bg-white text-black"
       style={{ backgroundColor: backgroundLayers[0]?.color ?? "rgb(255 255 255)" }}
     >
       <style>{libraryStyles}</style>
@@ -1022,7 +1119,7 @@ export default function PublicBookLibrary({
       )}
 
       <div
-        className="fixed left-4 top-4 z-[170] flex items-center gap-2 sm:left-6 sm:top-6"
+        className="public-book-nav fixed z-[170] flex items-center"
       >
         <div
           className={`public-nav-item ${navMotionClass}`}
@@ -1035,7 +1132,7 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => void handleBack()}
             disabled={transitionBusy}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-black/35 bg-transparent transition-transform duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            className="public-book-nav-icon flex items-center justify-center rounded-full border border-black/35 bg-transparent transition-transform duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
             aria-label={loginMounted ? "Back to book" : "Back"}
             title={loginMounted ? "Back to book" : "Back"}
           >
@@ -1064,7 +1161,7 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => setBookBalloonOpen((open) => !open)}
             disabled={loginMounted}
-            className={`flex h-12 w-12 items-center justify-center rounded-full border bg-transparent transition-all duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
+            className={`public-book-nav-icon flex items-center justify-center rounded-full border bg-transparent transition-all duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
               bookBalloonOpen
                 ? "border-black text-black"
                 : "border-black/35 text-black"
@@ -1099,7 +1196,7 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => void toggleLogin()}
             disabled={transitionBusy}
-            className={`flex h-12 items-center justify-center rounded-full border bg-transparent px-4 text-[13px] transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
+            className={`public-book-nav-text flex items-center justify-center rounded-full border bg-transparent text-[13px] transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
               loginMounted
                 ? "border-black text-black"
                 : "border-black/35 text-black"
@@ -1121,7 +1218,7 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => void handleThreeD()}
             disabled={transitionBusy || loginMounted}
-            className="flex h-12 items-center justify-center rounded-full border border-black/35 bg-transparent px-4 text-[13px] text-black transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            className="public-book-nav-text flex items-center justify-center rounded-full border border-black/35 bg-transparent text-[13px] text-black transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
           >
             3D
           </button>
@@ -1130,7 +1227,7 @@ export default function PublicBookLibrary({
 
       <aside
         id="public-book-balloon"
-        className={`fixed left-4 top-[76px] z-[150] flex max-h-[72vh] w-[min(88vw,390px)] origin-top-left flex-col rounded-[34px] border border-black/25 bg-white/95 p-5 shadow-[0_18px_65px_rgba(0,0,0,0.16)] backdrop-blur-xl transition-[transform,opacity,filter] duration-500 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] sm:left-[74px] sm:top-[82px] ${
+        className={`public-book-balloon fixed left-4 top-[76px] z-[150] flex max-h-[72vh] w-[min(88vw,390px)] origin-top-left flex-col rounded-[34px] border border-black/25 bg-white/95 p-5 shadow-[0_18px_65px_rgba(0,0,0,0.16)] backdrop-blur-xl transition-[transform,opacity,filter] duration-500 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] sm:left-[74px] sm:top-[82px] ${
           bookBalloonOpen && !loginMounted
             ? "pointer-events-auto scale-100 opacity-100 blur-0"
             : "pointer-events-none scale-0 opacity-0 blur-[10px]"
@@ -1212,7 +1309,7 @@ export default function PublicBookLibrary({
       </aside>
 
       <div
-        className="pointer-events-none fixed inset-x-0 top-5 z-[100] flex justify-center px-[230px] sm:top-7"
+        className="public-book-label-wrap pointer-events-none fixed inset-x-0 top-5 z-[100] flex justify-center px-[230px] sm:top-7"
       >
         {selectedBook && (
           <p
@@ -1227,7 +1324,7 @@ export default function PublicBookLibrary({
         )}
       </div>
 
-      <main className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden px-2 pb-4 pt-20 sm:px-5 sm:pb-6 sm:pt-24">
+      <main className="public-book-main relative z-10 flex h-full w-full items-center justify-center overflow-hidden px-2 sm:px-5">
         {loadingBooks || (loadingPages && !selectedBook) ? (
           <div
             className={`public-route-message ${

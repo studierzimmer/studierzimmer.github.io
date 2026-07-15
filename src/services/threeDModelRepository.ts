@@ -1,7 +1,9 @@
+import { MODEL_BUCKET, supabase } from "@/lib/supabase";
 import {
-  MODEL_BUCKET,
-  supabase,
-} from "@/lib/supabase";
+  convertStepToGlb,
+  isStepFile,
+  type ModelProcessingCallback,
+} from "@/services/stepModelConverter";
 import type {
   ThreeDModel,
   UpdateThreeDModelInput,
@@ -9,17 +11,41 @@ import type {
 
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const MODEL_URL_LIFETIME_SECONDS = 15 * 60;
+const PUBLIC_MODEL_COLUMNS = [
+  "id",
+  "name",
+  "description",
+  "file_name",
+  "storage_path",
+  "is_published",
+  "is_featured",
+  "sort_order",
+  "plaster_color",
+  "created_at",
+  "updated_at",
+].join(",");
 
+type ModelFileExtension = "glb" | "stl" | "step" | "stp";
 type ThreeDModelRow = Omit<ThreeDModel, "public_url">;
+
+interface PreparedModelFiles {
+  previewFile: File;
+  sourceFile: File | null;
+  sourceFormat: "step" | null;
+}
+
+interface UploadedModelFiles {
+  fileName: string;
+  storagePath: string;
+  sourceFileName: string | null;
+  sourceStoragePath: string | null;
+  sourceFormat: "step" | null;
+}
 
 function asError(error: unknown, fallback: string): Error {
   if (error instanceof Error) return error;
 
-  if (
-    typeof error === "object" &&
-    error &&
-    "message" in error
-  ) {
+  if (typeof error === "object" && error && "message" in error) {
     return new Error(String((error as { message: unknown }).message));
   }
 
@@ -41,6 +67,9 @@ async function signedUrlFor(storagePath: string): Promise<string> {
 async function mapModel(row: ThreeDModelRow): Promise<ThreeDModel> {
   return {
     ...row,
+    source_file_name: row.source_file_name ?? null,
+    source_storage_path: row.source_storage_path ?? null,
+    source_format: row.source_format ?? null,
     public_url: await signedUrlFor(row.storage_path),
   };
 }
@@ -65,16 +94,22 @@ function randomToken(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function modelFileExtension(file: File): "glb" | "stl" {
-  const lowerName = file.name.toLowerCase();
+function modelFileExtension(file: File): ModelFileExtension {
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
 
-  if (lowerName.endsWith(".glb")) return "glb";
-  if (lowerName.endsWith(".stl")) return "stl";
+  if (
+    extension === "glb" ||
+    extension === "stl" ||
+    extension === "step" ||
+    extension === "stp"
+  ) {
+    return extension;
+  }
 
-  throw new Error("Choose a .glb or .stl model file.");
+  throw new Error("Choose a .glb, .stl, .step or .stp model file.");
 }
 
-function validateModelFile(file: File): "glb" | "stl" {
+function validateModelFile(file: File): ModelFileExtension {
   const extension = modelFileExtension(file);
 
   if (file.size > MAX_MODEL_BYTES) {
@@ -84,15 +119,24 @@ function validateModelFile(file: File): "glb" | "stl" {
   return extension;
 }
 
-async function uploadModelFile(name: string, file: File): Promise<string> {
-  const extension = validateModelFile(file);
+function contentTypeFor(extension: ModelFileExtension): string {
+  if (extension === "stl") return "model/stl";
+  if (extension === "step" || extension === "stp") return "application/step";
+  return "model/gltf-binary";
+}
 
-  const storagePath = `${safeFolderName(name)}/${Date.now()}-${randomToken()}.${extension}`;
+async function uploadStoredFile(
+  name: string,
+  file: File,
+  directory: "preview" | "source"
+): Promise<string> {
+  const extension = validateModelFile(file);
+  const storagePath = `${safeFolderName(name)}/${directory}/${Date.now()}-${randomToken()}.${extension}`;
   const { error } = await supabase.storage
     .from(MODEL_BUCKET)
     .upload(storagePath, file, {
       cacheControl: "3600",
-      contentType: extension === "stl" ? "model/stl" : "model/gltf-binary",
+      contentType: contentTypeFor(extension),
       upsert: false,
     });
 
@@ -103,10 +147,67 @@ async function uploadModelFile(name: string, file: File): Promise<string> {
   return storagePath;
 }
 
+async function removeStoragePaths(paths: Array<string | null>): Promise<void> {
+  const uniquePaths = [...new Set(paths.filter((path): path is string => Boolean(path)))];
+  if (uniquePaths.length === 0) return;
+
+  const { error } = await supabase.storage.from(MODEL_BUCKET).remove(uniquePaths);
+  if (error) {
+    throw asError(error, "Unable to delete one or more model files from Storage.");
+  }
+}
+
+async function prepareModelFiles(
+  file: File,
+  onProgress?: ModelProcessingCallback
+): Promise<PreparedModelFiles> {
+  validateModelFile(file);
+
+  if (!isStepFile(file)) {
+    onProgress?.({ percent: 72, label: "MODEL FILE READY" });
+    return { previewFile: file, sourceFile: null, sourceFormat: null };
+  }
+
+  const previewFile = await convertStepToGlb(file, onProgress);
+  return { previewFile, sourceFile: file, sourceFormat: "step" };
+}
+
+async function uploadPreparedModelFiles(
+  name: string,
+  files: PreparedModelFiles,
+  onProgress?: ModelProcessingCallback
+): Promise<UploadedModelFiles> {
+  const uploadedPaths: string[] = [];
+
+  try {
+    onProgress?.({ percent: 86, label: "UPLOADING GLB PREVIEW" });
+    const storagePath = await uploadStoredFile(name, files.previewFile, "preview");
+    uploadedPaths.push(storagePath);
+
+    let sourceStoragePath: string | null = null;
+    if (files.sourceFile) {
+      onProgress?.({ percent: 93, label: "STORING PRIVATE STEP SOURCE" });
+      sourceStoragePath = await uploadStoredFile(name, files.sourceFile, "source");
+      uploadedPaths.push(sourceStoragePath);
+    }
+
+    return {
+      fileName: files.previewFile.name,
+      storagePath,
+      sourceFileName: files.sourceFile?.name ?? null,
+      sourceStoragePath,
+      sourceFormat: files.sourceFormat,
+    };
+  } catch (error) {
+    await removeStoragePaths(uploadedPaths).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function listPublishedThreeDModels(): Promise<ThreeDModel[]> {
   const { data, error } = await supabase
     .from("models_3d")
-    .select("*")
+    .select(PUBLIC_MODEL_COLUMNS)
     .eq("is_published", true)
     .order("is_featured", { ascending: false })
     .order("sort_order", { ascending: true })
@@ -116,7 +217,7 @@ export async function listPublishedThreeDModels(): Promise<ThreeDModel[]> {
     throw asError(error, "Unable to load the 3D models.");
   }
 
-  return Promise.all(((data ?? []) as ThreeDModelRow[]).map(mapModel));
+  return Promise.all(((data ?? []) as unknown as ThreeDModelRow[]).map(mapModel));
 }
 
 export async function listAllThreeDModelsForAdmin(): Promise<ThreeDModel[]> {
@@ -136,18 +237,25 @@ export async function listAllThreeDModelsForAdmin(): Promise<ThreeDModel[]> {
 export async function createThreeDModel(
   name: string,
   file: File,
-  sortOrder: number
+  sortOrder: number,
+  onProgress?: ModelProcessingCallback
 ): Promise<ThreeDModel> {
-  const cleanName = name.trim() || file.name.replace(/\.(?:glb|stl)$/i, "");
-  const storagePath = await uploadModelFile(cleanName, file);
+  const cleanName =
+    name.trim() || file.name.replace(/\.(?:glb|stl|step|stp)$/i, "");
+  const preparedFiles = await prepareModelFiles(file, onProgress);
+  const uploaded = await uploadPreparedModelFiles(cleanName, preparedFiles, onProgress);
 
+  onProgress?.({ percent: 98, label: "REGISTERING MODEL" });
   const { data, error } = await supabase
     .from("models_3d")
     .insert({
       name: cleanName,
       description: "",
-      file_name: file.name,
-      storage_path: storagePath,
+      file_name: uploaded.fileName,
+      storage_path: uploaded.storagePath,
+      source_file_name: uploaded.sourceFileName,
+      source_storage_path: uploaded.sourceStoragePath,
+      source_format: uploaded.sourceFormat,
       is_published: false,
       is_featured: false,
       sort_order: sortOrder,
@@ -156,10 +264,14 @@ export async function createThreeDModel(
     .single();
 
   if (error) {
-    await supabase.storage.from(MODEL_BUCKET).remove([storagePath]);
+    await removeStoragePaths([
+      uploaded.storagePath,
+      uploaded.sourceStoragePath,
+    ]).catch(() => undefined);
     throw asError(error, "Unable to register the 3D model.");
   }
 
+  onProgress?.({ percent: 100, label: "MODEL READY" });
   return await mapModel(data as ThreeDModelRow);
 }
 
@@ -203,43 +315,45 @@ export async function setFeaturedThreeDModel(id: string): Promise<void> {
 
 export async function replaceThreeDModelFile(
   model: ThreeDModel,
-  file: File
+  file: File,
+  onProgress?: ModelProcessingCallback
 ): Promise<ThreeDModel> {
-  const nextPath = await uploadModelFile(model.name, file);
+  const preparedFiles = await prepareModelFiles(file, onProgress);
+  const uploaded = await uploadPreparedModelFiles(model.name, preparedFiles, onProgress);
+
+  onProgress?.({ percent: 98, label: "UPDATING MODEL" });
   const { data, error } = await supabase
     .from("models_3d")
     .update({
-      file_name: file.name,
-      storage_path: nextPath,
+      file_name: uploaded.fileName,
+      storage_path: uploaded.storagePath,
+      source_file_name: uploaded.sourceFileName,
+      source_storage_path: uploaded.sourceStoragePath,
+      source_format: uploaded.sourceFormat,
     })
     .eq("id", model.id)
     .select("*")
     .single();
 
   if (error) {
-    await supabase.storage.from(MODEL_BUCKET).remove([nextPath]);
+    await removeStoragePaths([
+      uploaded.storagePath,
+      uploaded.sourceStoragePath,
+    ]).catch(() => undefined);
     throw asError(error, "Unable to replace the 3D model.");
   }
 
-  await supabase.storage.from(MODEL_BUCKET).remove([model.storage_path]);
+  await removeStoragePaths([model.storage_path, model.source_storage_path]);
+  onProgress?.({ percent: 100, label: "MODEL READY" });
   return await mapModel(data as ThreeDModelRow);
 }
 
 export async function deleteThreeDModel(model: ThreeDModel): Promise<void> {
-  const { error: storageError } = await supabase.storage
-    .from(MODEL_BUCKET)
-    .remove([model.storage_path]);
+  await removeStoragePaths([model.storage_path, model.source_storage_path]);
 
-  if (storageError) {
-    throw asError(storageError, "Unable to delete the model file from Storage.");
-  }
-
-  const { error } = await supabase
-    .from("models_3d")
-    .delete()
-    .eq("id", model.id);
+  const { error } = await supabase.from("models_3d").delete().eq("id", model.id);
 
   if (error) {
-    throw asError(error, "The model file was deleted, but its database row remains.");
+    throw asError(error, "The model files were deleted, but their database row remains.");
   }
 }

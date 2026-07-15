@@ -4,6 +4,9 @@ export interface ThreeDModel {
   description: string;
   file_name: string;
   storage_path: string;
+  source_file_name: string | null;
+  source_storage_path: string | null;
+  source_format: "step" | null;
   is_published: boolean;
   is_featured: boolean;
   sort_order: number;

@@ -20,6 +20,7 @@ import BookBackgroundColorPicker, {
   type RgbColor,
 } from "@/components/admin/BookBackgroundColorPicker";
 import type { ThreeDModel } from "@/types/threeDModels";
+import type { ModelProcessingProgress } from "@/services/stepModelConverter";
 
 interface AdminThreeDModelManagerProps {
   onModelsChanged?: () => void;
@@ -30,11 +31,16 @@ const inputClass =
 const buttonClass =
   "border border-black/35 bg-white px-3 py-2 text-[12px] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 const modelFileAccept =
-  ".glb,.stl,model/gltf-binary,model/stl,application/sla";
+  ".glb,.stl,.step,.stp,model/gltf-binary,model/stl,application/sla,application/step,model/step";
 const DEFAULT_PLASTER_COLOR: RgbColor = { r: 238, g: 234, b: 225 };
 
 function isStlModel(model: ThreeDModel): boolean {
   return /\.stl$/i.test(model.file_name) || /\.stl$/i.test(model.storage_path);
+}
+
+function modelFormat(model: ThreeDModel): "GLB" | "STL" | "STEP" {
+  if (model.source_format === "step") return "STEP";
+  return isStlModel(model) ? "STL" : "GLB";
 }
 
 function messageFrom(error: unknown): string {
@@ -48,6 +54,7 @@ export default function AdminThreeDModelManager({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [processing, setProcessing] = useState<ModelProcessingProgress | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
@@ -122,14 +129,19 @@ export default function AdminThreeDModelManager({
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newFile) {
-      setError("Choose a GLB or STL file.");
+      setError("Choose a GLB, STL, STEP or STP file.");
       return;
     }
 
     clearMessages();
     setBusy(true);
     try {
-      const created = await createThreeDModel(newName, newFile, models.length);
+      const created = await createThreeDModel(
+        newName,
+        newFile,
+        models.length,
+        setProcessing
+      );
       await reload(created.id);
       setNewName("");
       setNewFile(null);
@@ -138,6 +150,7 @@ export default function AdminThreeDModelManager({
     } catch (createError) {
       setError(messageFrom(createError));
     } finally {
+      setProcessing(null);
       setBusy(false);
     }
   };
@@ -177,12 +190,13 @@ export default function AdminThreeDModelManager({
     clearMessages();
     setBusy(true);
     try {
-      await replaceThreeDModelFile(selectedModel, file);
+      await replaceThreeDModelFile(selectedModel, file, setProcessing);
       await reload(selectedModel.id);
       setNotice("Model file replaced.");
     } catch (replaceError) {
       setError(messageFrom(replaceError));
     } finally {
+      setProcessing(null);
       setBusy(false);
     }
   };
@@ -223,8 +237,29 @@ export default function AdminThreeDModelManager({
             className="min-w-0 text-[12px]"
           />
           <button type="submit" disabled={busy || !newFile} className={buttonClass}>
-            UPLOAD GLB / STL
+            UPLOAD GLB / STL / STEP
           </button>
+          {processing && (
+            <div className="border border-black/20 p-3" role="status">
+              <div className="mb-2 flex items-center justify-between gap-3 text-[10px]">
+                <span>{processing.label}</span>
+                <span className="tabular-nums">{processing.percent}%</span>
+              </div>
+              <div
+                className="h-[3px] overflow-hidden bg-black/10"
+                role="progressbar"
+                aria-label="Processing 3D model"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={processing.percent}
+              >
+                <div
+                  className="h-full bg-black transition-[width] duration-300 ease-out"
+                  style={{ width: `${processing.percent}%` }}
+                />
+              </div>
+            </div>
+          )}
         </form>
 
         <div className="mb-2 flex items-center justify-between">
@@ -251,6 +286,7 @@ export default function AdminThreeDModelManager({
               >
                 <span className="block truncate text-[13px]">{model.name}</span>
                 <span className="mt-1 block truncate text-[10px] opacity-60">
+                  {modelFormat(model)} ·{" "}
                   {model.is_featured ? "FEATURED · " : ""}
                   {model.is_published ? "PUBLIC" : "DRAFT"}
                 </span>
@@ -283,6 +319,15 @@ export default function AdminThreeDModelManager({
               <p className="mt-1 break-all font-mono text-[10px] text-black/45">
                 {selectedModel.storage_path}
               </p>
+              {selectedModel.source_format === "step" && (
+                <div className="mt-3 border border-black/15 p-3 text-[11px] leading-relaxed">
+                  <p>STEP SOURCE · {selectedModel.source_file_name}</p>
+                  <p className="mt-1 text-black/50">
+                    The private STEP is stored separately. Public visitors receive
+                    only the generated GLB preview.
+                  </p>
+                </div>
+              )}
             </div>
 
             <label className="text-[11px]">
@@ -351,7 +396,7 @@ export default function AdminThreeDModelManager({
 
             <div className="border border-dashed border-black/25 p-3">
               <label className="block text-[11px]">
-                REPLACE GLB / STL
+                REPLACE GLB / STL / STEP
                 <input
                   ref={replaceFileRef}
                   type="file"

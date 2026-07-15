@@ -59,25 +59,25 @@ const PAGE_FORMAT_METRICS: Record<
   a4_long_edge: {
     width: 480,
     height: 679,
-    minWidth: 240,
+    minWidth: 160,
     maxWidth: 600,
-    minHeight: 340,
+    minHeight: 226,
     maxHeight: 849,
   },
   a4_short_edge: {
     width: 679,
     height: 480,
-    minWidth: 260,
+    minWidth: 190,
     maxWidth: 680,
-    minHeight: 184,
+    minHeight: 134,
     maxHeight: 481,
   },
   square: {
     width: 560,
     height: 560,
-    minWidth: 240,
+    minWidth: 180,
     maxWidth: 620,
-    minHeight: 240,
+    minHeight: 180,
     maxHeight: 620,
   },
 };
@@ -205,7 +205,7 @@ export default function FoldingBookViewer({
       <div className={`public-book-stage ${bookMotionClassName}`}>
         <div
           ref={sizeObserverTargetRef}
-          className="flex h-[min(74vh,850px)] w-[min(96vw,1400px)] items-center justify-center overflow-visible px-2"
+          className="public-book-viewport flex items-center justify-center overflow-visible px-2"
         >
           <div
             className="flex h-full w-full items-center justify-center"
@@ -270,14 +270,14 @@ export default function FoldingBookViewer({
       </div>
 
       <div
-        className={`public-book-meta item-title mt-20 flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
+        className={`public-book-meta public-book-title item-title flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
       >
         <span className="max-w-[60vw] truncate">{book.title}</span>
       </div>
 
       {book.description && (
         <div
-          className={`public-book-meta item-description mt-5 flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
+          className={`public-book-meta public-book-description item-description flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
         >
           <span className="max-w-[60vw] truncate">{book.description}</span>
         </div>
