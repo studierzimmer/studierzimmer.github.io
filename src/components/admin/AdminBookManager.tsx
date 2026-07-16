@@ -14,6 +14,7 @@ import type {
   BookPage,
 } from "@/types/books";
 import AdminThreeDModelManager from "@/components/admin/AdminThreeDModelManager";
+import AdminArchiveSectionManager from "@/components/admin/AdminArchiveSectionManager";
 import BookBackgroundColorPicker from "@/components/admin/BookBackgroundColorPicker";
 import {
   createBook,
@@ -27,6 +28,11 @@ import {
   updateBook,
   uploadBookPages,
 } from "@/services/bookRepository";
+import { listAllArchiveSectionsForAdmin } from "@/services/archiveSectionRepository";
+import {
+  DEFAULT_ARCHIVE_SECTIONS,
+  type ArchiveSection,
+} from "@/types/archiveSections";
 
 interface AdminBookManagerProps {
   userEmail: string;
@@ -164,7 +170,12 @@ export default function AdminBookManager({
     embedded ? "outside" : "visible"
   );
   const [books, setBooks] = useState<Book[]>([]);
-  const [managerSection, setManagerSection] = useState<"books" | "models">("books");
+  const [managerSection, setManagerSection] = useState<
+    "books" | "models" | "sections"
+  >("books");
+  const [archiveSections, setArchiveSections] = useState<ArchiveSection[]>(
+    DEFAULT_ARCHIVE_SECTIONS
+  );
 
   const [selectedBookId, setSelectedBookId] =
     useState<string | null>(null);
@@ -364,6 +375,29 @@ export default function AdminBookManager({
 
     void load();
 
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      archiveSections.length > 0 &&
+      !archiveSections.some((section) => section.slug === newCategory)
+    ) {
+      setNewCategory(archiveSections[0].slug);
+    }
+  }, [archiveSections, newCategory]);
+
+  useEffect(() => {
+    let active = true;
+    void listAllArchiveSectionsForAdmin()
+      .then((sections) => {
+        if (active && sections.length > 0) setArchiveSections(sections);
+      })
+      .catch(() => {
+        if (active) setArchiveSections(DEFAULT_ARCHIVE_SECTIONS);
+      });
     return () => {
       active = false;
     };
@@ -729,11 +763,24 @@ export default function AdminBookManager({
         >
           3D MODELS
         </button>
+        <button
+          type="button"
+          onClick={() => setManagerSection("sections")}
+          className={`${buttonClass} ${
+            managerSection === "sections" ? "bg-black text-white" : ""
+          }`}
+        >
+          ARCHIVE SECTIONS
+        </button>
       </nav>
 
       {managerSection === "models" ? (
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminThreeDModelManager />
+        </main>
+      ) : managerSection === "sections" ? (
+        <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
+          <AdminArchiveSectionManager onSectionsChanged={setArchiveSections} />
         </main>
       ) : (
       <main className="mx-auto grid w-full max-w-[1500px] gap-0 md:grid-cols-[320px_minmax(0,1fr)]">
@@ -806,17 +853,11 @@ export default function AdminBookManager({
                 }
                 className={`${inputClass} mt-1`}
               >
-                <option value="objects">
-                  OBJECTS
-                </option>
-
-                <option value="graphics">
-                  GRAPHICS
-                </option>
-
-                <option value="concepts">
-                  CONCEPTS
-                </option>
+                {archiveSections.map((section) => (
+                  <option key={section.id} value={section.slug}>
+                    {section.name.toUpperCase()}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -1007,17 +1048,18 @@ export default function AdminBookManager({
                       }
                       className={`${inputClass} mt-1`}
                     >
-                      <option value="objects">
-                        OBJECTS
-                      </option>
-
-                      <option value="graphics">
-                        GRAPHICS
-                      </option>
-
-                      <option value="concepts">
-                        CONCEPTS
-                      </option>
+                      {!archiveSections.some(
+                        (section) => section.slug === editCategory
+                      ) && (
+                        <option value={editCategory}>
+                          {editCategory.toUpperCase()}
+                        </option>
+                      )}
+                      {archiveSections.map((section) => (
+                        <option key={section.id} value={section.slug}>
+                          {section.name.toUpperCase()}
+                        </option>
+                      ))}
                     </select>
                   </label>
 

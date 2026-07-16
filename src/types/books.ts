@@ -1,7 +1,4 @@
-export type BookCategory =
-  | "objects"
-  | "graphics"
-  | "concepts";
+export type BookCategory = string;
 
 export type BookPageFormat =
   | "a4_long_edge"

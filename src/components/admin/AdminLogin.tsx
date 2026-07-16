@@ -26,7 +26,7 @@ export default function AdminLogin({
   const [entered, setEntered] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
-  const backTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const firstFrame = window.requestAnimationFrame(() => {

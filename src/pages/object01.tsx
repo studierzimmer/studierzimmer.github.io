@@ -197,7 +197,7 @@ useEffect(() => {
     });
 
     requestAnimationFrame(() => {
-      setTimeout(() => {
+      window.setTimeout(() => {
         const toLoad = pageElsRef.current.filter(Boolean) as HTMLElement[];
         if (toLoad.length) pageFlipRef.current!.loadFromHTML(toLoad);
         setPageflipReady(true);
@@ -226,7 +226,7 @@ useEffect(() => {
         const flipTime = flip.getSettings().flippingTime || 520;
         if (timers.current?.shift) clearTimeout(timers.current.shift);
         timers.current = timers.current || {};
-        timers.current.shift = setTimeout(() => {
+        timers.current.shift = window.setTimeout(() => {
           timers.current!.shift = undefined;
           if (!hostDims.single && idx === 0) {
             const shift = -Math.round(hostDims.pageW / 2);
@@ -254,12 +254,12 @@ useEffect(() => {
   // --- Entrance + background fade ---
   useEffect(() => {
     timers.current = {};
-    timers.current.mounted = setTimeout(() => setMounted(true), 12);
-    timers.current.entranceEnd = setTimeout(
+    timers.current.mounted = window.setTimeout(() => setMounted(true), 12);
+    timers.current.entranceEnd = window.setTimeout(
       () => setEntrancePlayed(true),
       ENTRY_DURATION + pages.length * STAGGER_MS + 80
     );
-    timers.current.bg = setTimeout(() => setBgWhite(true), 380);
+    timers.current.bg = window.setTimeout(() => setBgWhite(true), 380);
 
     return () => {
       if (!timers.current) return;
@@ -282,10 +282,10 @@ useEffect(() => {
       if (idx > 0) {
         flip.flipPrev();
         const flipTime = flip.getSettings().flippingTime || 520;
-        setTimeout(step, flipTime - 80);
+        window.setTimeout(step, flipTime - 80);
       } else {
         const flipTime = flip.getSettings().flippingTime || 520;
-        setTimeout(done, flipTime - 80);
+        window.setTimeout(done, flipTime - 80);
       }
     };
     step();
@@ -294,14 +294,14 @@ useEffect(() => {
   const handleBackClick = () => {
     if (exiting) return;
     setPressed(true);
-    setTimeout(() => setPressed(false), 80);
+    window.setTimeout(() => setPressed(false), 80);
 
     const idx = currentPageIndex ?? 0;
     const finalizeExit = () => {
       setExiting(true);
       const lastDelay = STAGGER_MS * Math.max(0, pages.length - 1);
       const total = lastDelay + EXIT_DURATION + 80;
-      timers.current!.exit = setTimeout(() => {
+      timers.current!.exit = window.setTimeout(() => {
         try {
           pageFlipRef.current?.clear();
           pageFlipRef.current?.destroy();
@@ -316,13 +316,13 @@ useEffect(() => {
     if (idx > 0 && pageFlipRef.current) {
       flipAllBackAsync(() => {
         setBgWhite(false);
-        timers.current!.exit = setTimeout(finalizeExit, BG_FADE_DURATION);
+        timers.current!.exit = window.setTimeout(finalizeExit, BG_FADE_DURATION);
       });
            return;
     }
 
     setBgWhite(false);
-    timers.current!.exit = setTimeout(finalizeExit, BG_FADE_DURATION);
+    timers.current!.exit = window.setTimeout(finalizeExit, BG_FADE_DURATION);
   };
 
   const onBackPointerDown = (e: React.PointerEvent) => {

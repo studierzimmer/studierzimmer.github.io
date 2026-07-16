@@ -73,17 +73,36 @@ const libraryStyles = `
 
 .public-book-main {
   padding-top: calc(env(safe-area-inset-top) + 5.25rem);
-  padding-bottom: calc(env(safe-area-inset-bottom) + 0.9rem);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 1.6rem);
 }
 
 .public-book-viewport {
-  width: min(96vw, 1400px);
-  height: min(74dvh, 850px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 13rem));
-  min-height: 220px;
+  box-sizing: border-box;
+  width: min(calc(100vw - clamp(48px, 8vw, 112px)), 1280px);
+  height: min(64dvh, 720px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 11.5rem));
+  min-height: 0;
+  padding: clamp(16px, 2.6vw, 34px);
+  contain: layout paint;
+}
+
+.public-book-surface {
+  transform: none;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 700ms ease,
+    filter 700ms ease;
+}
+
+.public-book-surface.is-login-muted {
+  transform: scale(0.94);
+  opacity: 0.25;
+  filter: blur(9px);
 }
 
 .public-book-title {
-  margin-top: clamp(14px, 4dvh, 5rem);
+  margin-top: clamp(8px, 2.2dvh, 1.75rem);
 }
 
 .public-book-description {
@@ -112,13 +131,14 @@ const libraryStyles = `
 
   .public-book-main {
     padding-top: calc(env(safe-area-inset-top) + 4.3rem);
-    padding-bottom: calc(env(safe-area-inset-bottom) + 0.55rem);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
   }
 
   .public-book-viewport {
-    width: min(94vw, 1400px);
-    height: min(66dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9.5rem));
-    min-height: 190px;
+    width: min(calc(100vw - clamp(36px, 8vw, 64px)), 1280px);
+    height: min(58dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9.2rem));
+    min-height: 0;
+    padding: clamp(12px, 2.4vw, 20px);
   }
 
   .public-book-title,
@@ -142,7 +162,11 @@ const libraryStyles = `
   }
 
   .public-book-title {
-    margin-top: 8px;
+    margin-top: 5px;
+  }
+
+  .public-book-viewport {
+    height: min(52dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8.4rem));
   }
 }
 
@@ -480,15 +504,15 @@ export default function PublicBookLibrary({
   >(null);
   const initialBookLoadingRef = useRef(false);
   const savedBookSessionRef = useRef(readBookSession());
-  const viewerAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewerAnimationTimerRef = useRef<number | null>(null);
   const backgroundLayerIdRef = useRef(0);
   const backgroundColorRef = useRef("rgb(255 255 255)");
-  const backgroundCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backgroundCleanupTimerRef = useRef<number | null>(null);
   const viewerReadyBookIdRef = useRef<string | null>(null);
   const viewerReadyWaiterRef = useRef<{
     bookId: string;
     finish: () => void;
-    timeout: ReturnType<typeof setTimeout>;
+    timeout: number;
   } | null>(null);
   const [backgroundLayers, setBackgroundLayers] = useState([
     { id: 0, color: backgroundColorRef.current },
@@ -1352,10 +1376,10 @@ export default function PublicBookLibrary({
         ) : selectedBook ? (
           <div className="h-full w-full">
             <div
-              className={`flex h-full w-full items-center justify-center transition-[transform,opacity,filter] duration-700 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] ${
+              className={`public-book-surface flex h-full w-full items-center justify-center ${
                 loginMounted
-                  ? "scale-[0.94] opacity-25 blur-[9px]"
-                  : "scale-100 opacity-100 blur-0"
+                  ? "is-login-muted"
+                  : ""
               }`}
             >
               <FoldingBookViewer

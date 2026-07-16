@@ -21,12 +21,14 @@ const PUBLIC_MODEL_COLUMNS = [
   "is_featured",
   "sort_order",
   "plaster_color",
+  "hdri_file_name",
+  "hdri_storage_path",
   "created_at",
   "updated_at",
 ].join(",");
 
 type ModelFileExtension = "glb" | "stl" | "step" | "stp";
-type ThreeDModelRow = Omit<ThreeDModel, "public_url">;
+type ThreeDModelRow = Omit<ThreeDModel, "public_url" | "hdri_public_url">;
 
 interface PreparedModelFiles {
   previewFile: File;
@@ -65,12 +67,20 @@ async function signedUrlFor(storagePath: string): Promise<string> {
 }
 
 async function mapModel(row: ThreeDModelRow): Promise<ThreeDModel> {
+  const [publicUrl, hdriPublicUrl] = await Promise.all([
+    signedUrlFor(row.storage_path),
+    row.hdri_storage_path ? signedUrlFor(row.hdri_storage_path) : null,
+  ]);
+
   return {
     ...row,
     source_file_name: row.source_file_name ?? null,
     source_storage_path: row.source_storage_path ?? null,
     source_format: row.source_format ?? null,
-    public_url: await signedUrlFor(row.storage_path),
+    hdri_file_name: row.hdri_file_name ?? null,
+    hdri_storage_path: row.hdri_storage_path ?? null,
+    public_url: publicUrl,
+    hdri_public_url: hdriPublicUrl,
   };
 }
 
@@ -348,8 +358,76 @@ export async function replaceThreeDModelFile(
   return await mapModel(data as ThreeDModelRow);
 }
 
+function validateHdriFile(file: File): "hdr" | "exr" {
+  const extension = file.name.toLowerCase().match(/\.(hdr|exr)$/)?.[1];
+  if (extension !== "hdr" && extension !== "exr") {
+    throw new Error("Choose a .hdr or .exr environment file.");
+  }
+  if (file.size > MAX_MODEL_BYTES) {
+    throw new Error("The environment file is larger than 100 MB.");
+  }
+  return extension;
+}
+
+export async function replaceThreeDModelHdri(
+  model: ThreeDModel,
+  file: File
+): Promise<ThreeDModel> {
+  const extension = validateHdriFile(file);
+  const storagePath = `${safeFolderName(model.name)}/environment/${Date.now()}-${randomToken()}.${extension}`;
+  const { error: uploadError } = await supabase.storage
+    .from(MODEL_BUCKET)
+    .upload(storagePath, file, {
+      cacheControl: "3600",
+      contentType:
+        extension === "hdr" ? "image/vnd.radiance" : "image/x-exr",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw asError(uploadError, `Unable to upload ${file.name}.`);
+  }
+
+  const { data, error } = await supabase
+    .from("models_3d")
+    .update({
+      hdri_file_name: file.name,
+      hdri_storage_path: storagePath,
+    })
+    .eq("id", model.id)
+    .select("*")
+    .single();
+
+  if (error) {
+    await removeStoragePaths([storagePath]).catch(() => undefined);
+    throw asError(error, "Unable to attach the HDRI to this model.");
+  }
+
+  await removeStoragePaths([model.hdri_storage_path]);
+  return await mapModel(data as ThreeDModelRow);
+}
+
+export async function removeThreeDModelHdri(
+  model: ThreeDModel
+): Promise<ThreeDModel> {
+  const { data, error } = await supabase
+    .from("models_3d")
+    .update({ hdri_file_name: null, hdri_storage_path: null })
+    .eq("id", model.id)
+    .select("*")
+    .single();
+
+  if (error) throw asError(error, "Unable to remove this model HDRI.");
+  await removeStoragePaths([model.hdri_storage_path]);
+  return await mapModel(data as ThreeDModelRow);
+}
+
 export async function deleteThreeDModel(model: ThreeDModel): Promise<void> {
-  await removeStoragePaths([model.storage_path, model.source_storage_path]);
+  await removeStoragePaths([
+    model.storage_path,
+    model.source_storage_path,
+    model.hdri_storage_path,
+  ]);
 
   const { error } = await supabase.from("models_3d").delete().eq("id", model.id);
 

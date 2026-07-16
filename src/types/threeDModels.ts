@@ -7,6 +7,8 @@ export interface ThreeDModel {
   source_file_name: string | null;
   source_storage_path: string | null;
   source_format: "step" | null;
+  hdri_file_name: string | null;
+  hdri_storage_path: string | null;
   is_published: boolean;
   is_featured: boolean;
   sort_order: number;
@@ -14,6 +16,7 @@ export interface ThreeDModel {
   created_at: string;
   updated_at: string;
   public_url: string;
+  hdri_public_url: string | null;
 }
 
 export interface UpdateThreeDModelInput {
@@ -23,4 +26,6 @@ export interface UpdateThreeDModelInput {
   is_featured?: boolean;
   sort_order?: number;
   plaster_color?: string;
+  hdri_file_name?: string | null;
+  hdri_storage_path?: string | null;
 }

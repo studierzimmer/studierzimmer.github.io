@@ -12,7 +12,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import LoadingLogo from "@/components/LoadingLogo";
 import SkyOceanBackground from "@/components/SkyOceanBackground";
 import { listPublishedBooks } from "@/services/bookRepository";
-import type { Book, BookCategory } from "@/types/books";
+import { listVisibleArchiveSections } from "@/services/archiveSectionRepository";
+import type { Book } from "@/types/books";
+import {
+  DEFAULT_ARCHIVE_SECTIONS,
+  type ArchiveSection,
+} from "@/types/archiveSections";
 import {
   BOOK_INDEX_RETURN_KEY,
   BOOK_INTRO_RETURN_KEY,
@@ -183,7 +188,8 @@ input.search-input:-webkit-autofill:active {
 
 .main-control-item.item-back { animation-delay: 0ms; }
 .main-control-item.item-archive { animation-delay: 90ms; }
-.main-control-item.item-play { animation-delay: 180ms; }
+.main-control-item.item-about { animation-delay: 180ms; }
+.main-control-item.item-play { animation-delay: 270ms; }
 
 .archive-elastic-item.item-featured { animation-delay: 0ms; }
 .archive-elastic-item.item-search { animation-delay: 70ms; }
@@ -304,11 +310,8 @@ type ListSnapshot = {
   archiveOpen?: boolean;
 };
 
-const CATEGORY_CODES: Record<BookCategory, string> = {
-  objects: "OBJ",
-  graphics: "GRPH",
-  concepts: "CNCP",
-};
+const ABOUT_TEXT =
+  "A short biography will appear here. This text can be replaced when the final copy is ready.";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -331,6 +334,10 @@ const Index = () => {
   const [publishedBooks, setPublishedBooks] = useState<Book[]>([]);
   const [booksLoading, setBooksLoading] = useState(true);
   const [booksError, setBooksError] = useState<string | null>(null);
+  const [archiveSections, setArchiveSections] = useState<ArchiveSection[]>(
+    DEFAULT_ARCHIVE_SECTIONS
+  );
+  const [archiveSectionsManaged, setArchiveSectionsManaged] = useState(false);
 
   const loadPublishedBooks = useCallback(async () => {
     setBooksLoading(true);
@@ -349,11 +356,24 @@ const Index = () => {
     }
   }, []);
 
+  const loadArchiveSections = useCallback(async () => {
+    try {
+      const nextSections = await listVisibleArchiveSections();
+      setArchiveSections(nextSections);
+      setArchiveSectionsManaged(true);
+    } catch {
+      setArchiveSections(DEFAULT_ARCHIVE_SECTIONS);
+      setArchiveSectionsManaged(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadPublishedBooks();
+    void loadArchiveSections();
 
     const refreshWhenFocused = () => {
       void loadPublishedBooks();
+      void loadArchiveSections();
     };
 
     const refreshWhenVisible = () => {
@@ -369,34 +389,56 @@ const Index = () => {
       window.removeEventListener("focus", refreshWhenFocused);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [loadPublishedBooks]);
+  }, [loadArchiveSections, loadPublishedBooks]);
 
   const featuredBook = useMemo(
     () => publishedBooks.find((book) => book.is_featured) ?? publishedBooks[0] ?? null,
     [publishedBooks]
   );
 
+  const displayedArchiveSections = useMemo(() => {
+    if (archiveSectionsManaged) return archiveSections;
+
+    const nextSections = [...archiveSections];
+    publishedBooks.forEach((book) => {
+      if (nextSections.some((section) => section.slug === book.category)) return;
+      nextSections.push({
+        id: `fallback-${book.category}`,
+        slug: book.category,
+        name: book.category.replace(/-/g, " "),
+        code: book.category.slice(0, 4).toUpperCase(),
+        sort_order: nextSections.length,
+        is_visible: true,
+        created_at: "",
+        updated_at: "",
+      });
+    });
+    return nextSections;
+  }, [archiveSections, archiveSectionsManaged, publishedBooks]);
+
   const archives = useMemo<Record<string, Item[]>>(() => {
+    const sectionMap = new Map(
+      displayedArchiveSections.map((section) => [section.slug, section])
+    );
     const toItem = (book: Book): Item => ({
       id: book.id,
-      category: CATEGORY_CODES[book.category],
+      category:
+        sectionMap.get(book.category)?.code ?? book.category.slice(0, 4).toUpperCase(),
       name: book.title,
       link: `/book/${encodeURIComponent(book.slug)}`,
       isFeatured: book.is_featured,
     });
 
-    return {
-      objects: publishedBooks
-        .filter((book) => book.category === "objects")
-        .map(toItem),
-      graphics: publishedBooks
-        .filter((book) => book.category === "graphics")
-        .map(toItem),
-      concepts: publishedBooks
-        .filter((book) => book.category === "concepts")
-        .map(toItem),
-    };
-  }, [publishedBooks]);
+    return displayedArchiveSections.reduce<Record<string, Item[]>>(
+      (result, section) => {
+        result[section.slug] = publishedBooks
+          .filter((book) => book.category === section.slug)
+          .map(toItem);
+        return result;
+      },
+      {}
+    );
+  }, [displayedArchiveSections, publishedBooks]);
 
   const allItems = useMemo<Item[]>(() => Object.values(archives).flat(), [archives]);
 
@@ -444,6 +486,7 @@ const Index = () => {
   const [archiveControlsMounted, setArchiveControlsMounted] = useState(
     initiallyArchiveOpen
   );
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const [showSplash, setShowSplash] = useState(false);
   const [introVisible, setIntroVisible] = useState(false);
@@ -481,7 +524,7 @@ const Index = () => {
   const [indexContentEntered, setIndexContentEntered] = useState(
     !returningToIndexContent
   );
-  const introTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const introTransitionTimerRef = useRef<number | null>(null);
   const [revealDone, setRevealDone] = useState<boolean>(() => {
     try {
       return sessionStorage.getItem("revealDone") === "true";
@@ -543,7 +586,7 @@ const Index = () => {
   }, [indexContentEntered, revealClosing, revealDone, stage]);
 
   const [inactive, setInactive] = useState(false);
-  const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inactivityTimer = useRef<number | null>(null);
 
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   const [pendingReentryRestore, setPendingReentryRestore] = useState(false);
@@ -580,6 +623,33 @@ const Index = () => {
     const host = document.getElementById("global-sky-ocean-bg");
     if (host) host.setAttribute("data-explore", exploreMode ? "1" : "0");
   }, [exploreMode]);
+
+  useEffect(() => {
+    const audioActive = hasCheckedSplash && !showSplash && !revealClosing;
+    const host = document.getElementById("global-sky-ocean-bg");
+    host?.setAttribute("data-audio-active", audioActive ? "1" : "0");
+
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("skyocean-audio", {
+          detail: { active: audioActive },
+        })
+      );
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [hasCheckedSplash, revealClosing, showSplash]);
+
+  useEffect(() => {
+    return () => {
+      document
+        .getElementById("global-sky-ocean-bg")
+        ?.setAttribute("data-audio-active", "0");
+      window.dispatchEvent(
+        new CustomEvent("skyocean-audio", { detail: { active: false } })
+      );
+    };
+  }, []);
 
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEYS.stage, stage);
@@ -702,6 +772,7 @@ const Index = () => {
   }, []);
 
   const handleArchiveToggle = useCallback(() => {
+    setAboutOpen(false);
     if (archiveControlsMounted) {
       resetState();
     }
@@ -709,6 +780,18 @@ const Index = () => {
     setArchiveControlsMounted((open) => !open);
     window.dispatchEvent(new Event("mousemove"));
   }, [archiveControlsMounted, resetState]);
+
+  const handleAboutToggle = useCallback(() => {
+    if (aboutOpen) {
+      setAboutOpen(false);
+      return;
+    }
+
+    resetState();
+    setArchiveControlsMounted(false);
+    setAboutOpen(true);
+    window.dispatchEvent(new Event("mousemove"));
+  }, [aboutOpen, resetState]);
 
   const filteredItems = useMemo(
     () =>
@@ -744,87 +827,18 @@ const Index = () => {
 
   const displayedItems = getDisplayedItems();
 
-  const computeDisplayedFor = useCallback(
-    (nextActive: string | null, nextQuery: string): Item[] => {
-      if (nextActive && nextActive !== "search" && !nextQuery) {
-        const sorted = archives[nextActive] || [];
-
-        const others = allItems.filter(
-          (item) => !sorted.some((sortedItem) => sortedItem.id === item.id)
-        );
-
-        return [...sorted, ...others];
-      }
-
-      if (nextActive === "search" && nextQuery) {
-        const sorted = allItems.filter((item) =>
-          item.name.toLowerCase().includes(nextQuery.toLowerCase())
-        );
-
-        const others = allItems.filter(
-          (item) => !sorted.some((sortedItem) => sortedItem.id === item.id)
-        );
-
-        return [...sorted, ...others];
-      }
-
-      return allItems;
-    },
-    [archives, allItems]
-  );
-
-  const [swapState, setSwapState] = useState<{
-    outgoing: Item[];
-    incoming: Item[];
-    scrollTop: number;
-  } | null>(null);
-
-  const [swapRunning, setSwapRunning] = useState(false);
-
-  const triggerListSwap = useCallback(
-    (nextActive: string | null, nextQuery: string, applyState: () => void) => {
-      const preItems = getDisplayedItems();
-      const preScroll = listScrollRef.current ? listScrollRef.current.scrollTop : 0;
-      const nextItems = computeDisplayedFor(nextActive, nextQuery);
-
-      setSwapState({
-        outgoing: preItems,
-        incoming: nextItems,
-        scrollTop: preScroll,
-      });
-
-      setSwapRunning(false);
-
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setSwapRunning(true);
-        });
-      });
-
-      applyState();
-
-      window.setTimeout(() => {
-        setSwapState(null);
-        setSwapRunning(false);
-      }, 350);
-    },
-    [getDisplayedItems, computeDisplayedFor]
-  );
-
   const handleArchiveClick = useCallback(
     (buttonName: string) => {
       if (activeButton === buttonName) {
         resetState();
       } else {
-        triggerListSwap(buttonName, "", () => {
-          setActiveButton(buttonName);
-          setStage("list");
-          setSearchOpen(false);
-          setSearchQuery("");
-        });
+        setActiveButton(buttonName);
+        setStage("list");
+        setSearchOpen(false);
+        setSearchQuery("");
       }
     },
-    [activeButton, resetState, triggerListSwap]
+    [activeButton, resetState]
   );
 
   const handleRowClick = useCallback(
@@ -863,9 +877,10 @@ const Index = () => {
     ]
   );
 
-  const handleAboutClick = useCallback(() => {
+  const handleBackToIntro = useCallback(() => {
     resetState();
     dismissArchiveControls();
+    setAboutOpen(false);
     setIntroLeaving(false);
     setIntroItemsEntered(false);
     setStage("intro");
@@ -879,6 +894,7 @@ const Index = () => {
     setIntroLeaving(true);
     setIndexContentEntered(false);
     dismissArchiveControls();
+    setAboutOpen(false);
 
     introTransitionTimerRef.current = window.setTimeout(() => {
       setStage("main");
@@ -898,13 +914,11 @@ const Index = () => {
     if (activeButton === "search") {
       resetState();
     } else {
-      triggerListSwap("search", searchQuery, () => {
-        setSearchOpen(true);
-        setStage("list");
-        setActiveButton("search");
-      });
+      setSearchOpen(true);
+      setStage("list");
+      setActiveButton("search");
     }
-  }, [activeButton, resetState, triggerListSwap, searchQuery]);
+  }, [activeButton, resetState]);
 
   const resetInactivityTimer = useCallback(() => {
     setInactive(false);
@@ -913,7 +927,7 @@ const Index = () => {
       clearTimeout(inactivityTimer.current);
     }
 
-    inactivityTimer.current = setTimeout(() => {
+    inactivityTimer.current = window.setTimeout(() => {
       setInactive(true);
     }, 5000);
   }, []);
@@ -1206,9 +1220,11 @@ const Index = () => {
   const menuLift =
     stage === "list"
       ? "-15vh"
-      : archiveControlsMounted
+      : archiveControlsMounted || aboutOpen
         ? "-42px"
         : "0px";
+
+  const archivePieceCount = displayedArchiveSections.length + 3;
 
   const mainControlTranslation = (index: number) => ({
     animate: {
@@ -1223,9 +1239,9 @@ const Index = () => {
     },
   });
 
-  const archivePieceMotion = (index: number) => {
+  const archivePieceMotion = (index: number, totalPieces = archivePieceCount) => {
     const enterDelay = index * 0.055;
-    const leaveDelay = (5 - index) * 0.035;
+    const leaveDelay = Math.max(0, totalPieces - 1 - index) * 0.035;
     const hidden = {
       scale: 0,
       opacity: 0,
@@ -1336,7 +1352,7 @@ const Index = () => {
             >
               <p
                 className={`intro-elastic-item ${introItemMotionClass} text-[16px] md:text-[16px] text-left px-10 mb-4 cursor-pointer leading-wide tracking-wide break-keep`}
-                onClick={handleAboutClick}
+                onClick={handleBackToIntro}
               >
                 Hello,
                 <br />
@@ -1374,7 +1390,7 @@ const Index = () => {
                 <motion.div {...mainControlTranslation(0)}>
                   <div className={`main-control-item item-back ${mainControlMotionClass}`}>
                     <button
-                      onClick={handleAboutClick}
+                      onClick={handleBackToIntro}
                       className={`px-2 py-[0.5px] select-none transition-all hover:scale-110 active:scale-110 ${
                         exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                       }`}
@@ -1400,6 +1416,21 @@ const Index = () => {
                 </motion.div>
 
                 <motion.div {...mainControlTranslation(2)}>
+                  <div className={`main-control-item item-about ${mainControlMotionClass}`}>
+                    <button
+                      type="button"
+                      onClick={handleAboutToggle}
+                      aria-expanded={aboutOpen}
+                      className={`px-2 py-[0.5px] select-none transition-all hover:scale-110 active:scale-110 ${
+                        aboutOpen ? "underline underline-offset-4" : ""
+                      } ${exploreMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
+                    >
+                      ABOUT
+                    </button>
+                  </div>
+                </motion.div>
+
+                <motion.div {...mainControlTranslation(3)}>
                   <div className={`main-control-item item-play ${mainControlMotionClass}`}>
                     <button
                       onClick={(event) => {
@@ -1451,7 +1482,7 @@ const Index = () => {
                   }`}
                 >
                   <motion.div
-                    {...archivePieceMotion(0)}
+                    {...archivePieceMotion(0, archivePieceCount)}
                     className="archive-elastic-item item-featured min-h-[32px] text-[14px] md:text-[16px]"
                   >
                     {featuredBook ? (
@@ -1482,7 +1513,7 @@ const Index = () => {
 
                   <div className="flex flex-wrap items-center justify-center gap-3 uppercase md:gap-10">
                     <motion.div
-                      {...archivePieceMotion(1)}
+                      {...archivePieceMotion(1, archivePieceCount)}
                       className="archive-elastic-item item-search"
                     >
                       <button
@@ -1495,28 +1526,28 @@ const Index = () => {
                       </button>
                     </motion.div>
 
-                    {["objects", "graphics", "concepts"].map((buttonName, index) => (
+                    {displayedArchiveSections.map((section, index) => (
                       <motion.div
-                        key={buttonName}
-                        {...archivePieceMotion(index + 2)}
-                        className={`archive-elastic-item item-${buttonName}`}
+                        key={section.id}
+                        {...archivePieceMotion(index + 2, archivePieceCount)}
+                        className={`archive-elastic-item item-${section.slug}`}
                       >
                         <button
                           onClick={() => {
-                            handleArchiveClick(buttonName);
+                            handleArchiveClick(section.slug);
                           }}
                           className={`text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
-                            activeButton === buttonName ? "underline" : "bg-alpha"
+                            activeButton === section.slug ? "underline" : "bg-alpha"
                           }`}
                         >
-                          {buttonName}
+                          {section.name}
                         </button>
                       </motion.div>
                     ))}
                   </div>
 
                   <motion.div
-                    {...archivePieceMotion(5)}
+                    {...archivePieceMotion(archivePieceCount - 1, archivePieceCount)}
                     className="archive-elastic-item item-search-field flex justify-center gap-2 py-2"
                   >
                     <div
@@ -1543,6 +1574,28 @@ const Index = () => {
                 </motion.div>
               )}
               </AnimatePresence>
+
+              <AnimatePresence initial={false}>
+                {aboutOpen && (
+                  <motion.div
+                    key="about-panel"
+                    initial={false}
+                    className={`mx-auto mt-7 max-w-xl pb-0 text-center leading-[1.55] ${
+                      exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
+                    }`}
+                  >
+                    <motion.div
+                      {...archivePieceMotion(0, 2)}
+                      className="archive-elastic-item px-2 text-[14px] md:text-[16px]"
+                    >
+                      <p className="mb-3 text-[11px] tracking-[0.16em] text-black/50">
+                        ABOUT
+                      </p>
+                      <p>{ABOUT_TEXT}</p>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             <div
@@ -1565,88 +1618,6 @@ const Index = () => {
                 <div className="py-5 text-center text-[14px] text-black/50">
                   Publish a book in the backend to make it appear here.
                 </div>
-              ) : swapState ? (
-                <div
-                  className="relative overflow-hidden no-scrollbar"
-                  style={{
-                    maxHeight: "calc(30vh - 2rem)",
-                    height: "calc(30vh - 2rem)",
-                  }}
-                >
-                  <div
-                    className="absolute inset-0 text-[16px] md:text-[16px] overflow-y-auto no-scrollbar transition-transform duration-300 ease-out"
-                    style={{
-                      transform: swapRunning ? "translateX(100%)" : "translateX(0%)",
-                    }}
-                    ref={(element) => {
-                      if (element) {
-                        element.scrollTop = swapState.scrollTop;
-                      }
-                    }}
-                  >
-                    {swapState.outgoing.map((item) => {
-                      const isActiveCategory = isItemActive(item);
-
-                      return (
-                        <div
-                          key={`out-${item.id}`}
-                          className={`grid grid-cols-2 text-[16px] md:text-[16px] cursor-pointer transition-colors duration-300 ${
-                            isActiveCategory
-                              ? "text-black hover:scale-95 active:scale-95 transition-all"
-                              : "text-gray-700 hover:scale-95 active:scale-95 transition-all"
-                          }`}
-                          onClick={() => {
-                            handleRowClick(item.link);
-                          }}
-                        >
-                          <div className="py-[0.5px] tracking-normal">{item.category}</div>
-
-                          <div className="py-[0.5px] tracking-normal leading-tight">
-                            {item.name}
-                            {item.isFeatured ? " *" : ""}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div
-                    className="absolute inset-0 overflow-y-auto no-scrollbar transition-transform duration-300 ease-in"
-                    style={{
-                      transform: swapRunning ? "translateX(0%)" : "translateX(-100%)",
-                    }}
-                    ref={(element) => {
-                      if (element) {
-                        element.scrollTop = swapState.scrollTop;
-                      }
-                    }}
-                  >
-                    {swapState.incoming.map((item) => {
-                      const isActiveCategory = isItemActive(item);
-
-                      return (
-                        <div
-                          key={`in-${item.id}`}
-                          className={`grid grid-cols-2 text-[16px] md:text-[16px] cursor-pointer transition-all duration-300 ${
-                            isActiveCategory
-                              ? "text-black hover:scale-95 active:scale-95 transition-all"
-                              : "text-gray-700 hover:scale-95 active:scale-95 transition-all"
-                          }`}
-                          onClick={() => {
-                            handleRowClick(item.link);
-                          }}
-                        >
-                          <div className="py-[0.5px] tracking-normal">{item.category}</div>
-
-                          <div className="py-[0.5px] tracking-normal leading-tight">
-                            {item.name}
-                            {item.isFeatured ? " *" : ""}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               ) : (
                 <div
                   ref={listScrollRef}
@@ -1655,16 +1626,33 @@ const Index = () => {
                     maxHeight: "calc(30vh - 2rem)",
                   }}
                 >
-                  {displayedItems.map((item) => {
+                  <AnimatePresence initial={false} mode="popLayout">
+                  {displayedItems.map((item, index) => {
                     const isActiveCategory = isItemActive(item);
 
                     return (
-                      <div
-                        key={item.id}
-                        className={`grid grid-cols-2 text-[16px] md:text-[16px] hover:scale-95 active:scale-95 backdrop-blur-[1px] cursor-pointer transition-all duration-300 ${
+                      <motion.div
+                        key={`${activeButton ?? "all"}:${item.id}`}
+                        initial={{ scale: 0, opacity: 0, filter: "blur(7px)" }}
+                        animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
+                        exit={{ scale: 0, opacity: 0, filter: "blur(7px)" }}
+                        whileHover={{ scale: 0.97 }}
+                        whileTap={{ scale: 0.95 }}
+                        transition={{
+                          scale: {
+                            type: "spring",
+                            stiffness: 430,
+                            damping: 23,
+                            mass: 0.68,
+                            delay: index * 0.022,
+                          },
+                          opacity: { duration: 0.18, delay: index * 0.022 },
+                          filter: { duration: 0.22, delay: index * 0.022 },
+                        }}
+                        className={`grid origin-center grid-cols-2 text-[16px] md:text-[16px] backdrop-blur-[1px] cursor-pointer ${
                           isActiveCategory
-                            ? "text-black transition-all"
-                            : "text-gray-700 transition-all"
+                            ? "text-black"
+                            : "text-gray-700"
                         }`}
                         onClick={() => {
                           handleRowClick(item.link);
@@ -1676,9 +1664,10 @@ const Index = () => {
                           {item.name}
                           {item.isFeatured ? " *" : ""}
                         </div>
-                      </div>
+                      </motion.div>
                     );
                   })}
+                  </AnimatePresence>
                 </div>
               )}
               </div>

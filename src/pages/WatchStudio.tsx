@@ -9,7 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Canvas, useLoader, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import {
   EffectComposer,
   HueSaturation,
@@ -25,10 +25,12 @@ import {
 } from "@react-three/drei";
 import {
   BackSide,
+  AnimationMixer,
   Box3,
   EdgesGeometry,
   LineBasicMaterial,
   LineSegments,
+  LoopRepeat,
   Material,
   Mesh,
   MeshBasicMaterial,
@@ -40,7 +42,7 @@ import {
   Vector3,
 } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import { STLLoader } from "three-stdlib";
+import { SkeletonUtils, STLLoader } from "three-stdlib";
 import AdminThreeDModelManager from "@/components/admin/AdminThreeDModelManager";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { listPublishedThreeDModels } from "@/services/threeDModelRepository";
@@ -83,6 +85,8 @@ const DEFAULT_MODEL: ThreeDModel = {
   source_file_name: null,
   source_storage_path: null,
   source_format: null,
+  hdri_file_name: null,
+  hdri_storage_path: null,
   is_published: true,
   is_featured: true,
   sort_order: 0,
@@ -90,6 +94,7 @@ const DEFAULT_MODEL: ThreeDModel = {
   created_at: "",
   updated_at: "",
   public_url: DEFAULT_WATCH_URL,
+  hdri_public_url: null,
 };
 
 const watchStudioStyles = `
@@ -343,12 +348,12 @@ function createOverrideMaterial(mode: Exclude<RenderMode, "pbr">): Material {
   }
 
   return new MeshPhysicalMaterial({
-    color: "#efefeb",
-    roughness: 0.66,
+    color: "#ffffff",
+    roughness: 0.68,
     metalness: 0,
-    clearcoat: 0.18,
-    clearcoatRoughness: 0.38,
-    sheen: 0.12,
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.58,
+    sheen: 0.06,
     sheenColor: "#ffffff",
     envMapIntensity: 0,
   });
@@ -367,6 +372,23 @@ function clonePbrMaterial(material: Material) {
 
 function isStlModel(model: ThreeDModel): boolean {
   return /\.stl$/i.test(model.file_name) || /\.stl$/i.test(model.storage_path);
+}
+
+function environmentUrlFor(model: ThreeDModel): string {
+  const signedUrl = model.hdri_public_url;
+
+  if (!signedUrl) return STUDIO_ENVIRONMENT_URL;
+
+  const sourceName =
+    model.hdri_file_name ??
+    model.hdri_storage_path ??
+    signedUrl.split("?", 1)[0];
+  const extension = sourceName.match(/\.(hdr|exr)$/i)?.[1]?.toLowerCase();
+
+  // Drei infers the loader from the last dot in the complete URL. Supabase
+  // signed tokens contain dots of their own, so provide a harmless fragment
+  // with the real extension. URL fragments are not sent to storage.
+  return extension ? `${signedUrl}#environment.${extension}` : signedUrl;
 }
 
 function createStlMaterial(mode: RenderMode, plasterColor: string): Material {
@@ -395,10 +417,10 @@ function FittedModel({
   mode: RenderMode;
   onReady: (modelId: string) => void;
 }) {
-  const { scene } = useGLTF(model.public_url);
+  const { scene, animations } = useGLTF(model.public_url);
 
   const normalizedModel = useMemo(() => {
-    const clone = scene.clone(true);
+    const clone = SkeletonUtils.clone(scene);
     const overrideMaterial =
       mode === "pbr" ? null : createOverrideMaterial(mode);
     const disposableMaterials = new Set<Material>();
@@ -471,6 +493,39 @@ function FittedModel({
       disposableGeometries,
     };
   }, [mode, scene]);
+
+  const animationMixer = useMemo(
+    () => new AnimationMixer(normalizedModel.object),
+    [normalizedModel.object]
+  );
+
+  useEffect(() => {
+    if (animations.length === 0) return;
+
+    const actions = animations.map((clip) => {
+      const action = animationMixer.clipAction(clip);
+      action.reset();
+      action.enabled = true;
+      action.paused = false;
+      action.clampWhenFinished = false;
+      action.setLoop(LoopRepeat, Infinity);
+      action.setEffectiveTimeScale(1);
+      action.setEffectiveWeight(1);
+      action.play();
+      return action;
+    });
+
+    return () => {
+      actions.forEach((action) => action.stop());
+      animationMixer.stopAllAction();
+      animations.forEach((clip) => animationMixer.uncacheClip(clip));
+      animationMixer.uncacheRoot(normalizedModel.object);
+    };
+  }, [animationMixer, animations, normalizedModel.object]);
+
+  useFrame((_, delta) => {
+    if (animations.length > 0) animationMixer.update(delta);
+  });
 
   useEffect(() => {
     return () => {
@@ -651,14 +706,15 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   const [modelListNotice, setModelListNotice] = useState<string | null>(null);
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const pendingModelIdRef = useRef<string | null>(null);
-  const modelSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modelVisibleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modelSwitchTimerRef = useRef<number | null>(null);
+  const modelVisibleTimerRef = useRef<number | null>(null);
   const loadingProgress = useProgress();
   const { loading: authLoading, user, isAdmin } = useAdminSession();
 
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? DEFAULT_MODEL;
   const selectedModelIsStl = isStlModel(selectedModel);
+  const selectedEnvironmentUrl = environmentUrlFor(selectedModel);
   const sceneMode = renderMode;
 
   const loadModels = useCallback(async () => {
@@ -699,7 +755,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
     setModelGeometryReady(false);
     setModelLoadError(false);
     setModelMotion("outside");
-  }, [catalogReady, selectedModel.public_url]);
+  }, [catalogReady, selectedModel.hdri_public_url, selectedModel.public_url]);
 
   useEffect(() => {
     return () => {
@@ -822,7 +878,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
     >
       <style>{watchStudioStyles}</style>
       <ModelLoadingOverlay
-        key={selectedModel.public_url}
+        key={`${selectedModel.public_url}-${selectedEnvironmentUrl}`}
         complete={modelAssetsComplete}
         onCompleted={handleModelFullyLoaded}
       />
@@ -947,7 +1003,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         >
           <ambientLight
             intensity={
-              sceneMode === "pen" ? 2.4 : sceneMode === "arctic" ? 0.65 : 0.62
+              sceneMode === "pen" ? 2.4 : sceneMode === "arctic" ? 1.45 : 0.62
             }
           />
           <directionalLight
@@ -959,7 +1015,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
           />
           <directionalLight
             position={[-8, 2, -5]}
-            intensity={sceneMode === "pbr" ? 0.9 : sceneMode === "arctic" ? 0.45 : 0.75}
+            intensity={sceneMode === "pbr" ? 0.9 : sceneMode === "arctic" ? 0.48 : 0.75}
           />
 
           <OrbitControls
@@ -1010,12 +1066,17 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
             </Suspense>
           </ModelErrorBoundary>
 
-          {sceneMode === "pbr" && <Environment files={STUDIO_ENVIRONMENT_URL} />}
+          {sceneMode === "pbr" && (
+            <Environment
+              key={selectedEnvironmentUrl}
+              files={selectedEnvironmentUrl}
+            />
+          )}
           {sceneMode !== "pen" && (
             <ContactShadows
               position={[0, -1.9, 0]}
               scale={6}
-              opacity={0.28}
+              opacity={sceneMode === "arctic" ? 0.14 : 0.28}
               blur={2.5}
               far={4}
               resolution={512}
@@ -1030,8 +1091,8 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
                 quality="performance"
                 aoRadius={0.22}
                 distanceFalloff={0.75}
-                intensity={1.2}
-                color="#505050"
+                intensity={0.42}
+                color="#d6d6d6"
               />
             </EffectComposer>
           )}

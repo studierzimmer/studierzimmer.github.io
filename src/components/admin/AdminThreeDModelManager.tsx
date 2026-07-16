@@ -10,7 +10,9 @@ import {
   createThreeDModel,
   deleteThreeDModel,
   listAllThreeDModelsForAdmin,
+  removeThreeDModelHdri,
   replaceThreeDModelFile,
+  replaceThreeDModelHdri,
   setFeaturedThreeDModel,
   updateThreeDModel,
 } from "@/services/threeDModelRepository";
@@ -32,6 +34,7 @@ const buttonClass =
   "border border-black/35 bg-white px-3 py-2 text-[12px] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 const modelFileAccept =
   ".glb,.stl,.step,.stp,model/gltf-binary,model/stl,application/sla,application/step,model/step";
+const hdriFileAccept = ".hdr,.exr,image/vnd.radiance,image/x-exr";
 const DEFAULT_PLASTER_COLOR: RgbColor = { r: 238, g: 234, b: 225 };
 
 function isStlModel(model: ThreeDModel): boolean {
@@ -69,6 +72,7 @@ export default function AdminThreeDModelManager({
   );
   const createFileRef = useRef<HTMLInputElement | null>(null);
   const replaceFileRef = useRef<HTMLInputElement | null>(null);
+  const hdriFileRef = useRef<HTMLInputElement | null>(null);
 
   const selectedModel = useMemo(
     () => models.find((model) => model.id === selectedId) ?? null,
@@ -119,6 +123,7 @@ export default function AdminThreeDModelManager({
       hexToRgb(selectedModel.plaster_color) ?? DEFAULT_PLASTER_COLOR
     );
     if (replaceFileRef.current) replaceFileRef.current.value = "";
+    if (hdriFileRef.current) hdriFileRef.current.value = "";
   }, [selectedModel]);
 
   const clearMessages = () => {
@@ -213,6 +218,37 @@ export default function AdminThreeDModelManager({
       setNotice("3D model deleted.");
     } catch (deleteError) {
       setError(messageFrom(deleteError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleHdriReplace = async (file: File | undefined) => {
+    if (!selectedModel || !file) return;
+    clearMessages();
+    setBusy(true);
+    try {
+      await replaceThreeDModelHdri(selectedModel, file);
+      await reload(selectedModel.id);
+      setNotice("Model HDRI saved. PBR will use it on the next load.");
+    } catch (hdriError) {
+      setError(messageFrom(hdriError));
+    } finally {
+      if (hdriFileRef.current) hdriFileRef.current.value = "";
+      setBusy(false);
+    }
+  };
+
+  const handleHdriRemove = async () => {
+    if (!selectedModel?.hdri_storage_path) return;
+    clearMessages();
+    setBusy(true);
+    try {
+      await removeThreeDModelHdri(selectedModel);
+      await reload(selectedModel.id);
+      setNotice("Custom HDRI removed. PBR now uses the built-in studio environment.");
+    } catch (hdriError) {
+      setError(messageFrom(hdriError));
     } finally {
       setBusy(false);
     }
@@ -406,6 +442,43 @@ export default function AdminThreeDModelManager({
                   className="mt-2 block min-w-0 text-[12px]"
                 />
               </label>
+            </div>
+
+            <div className="border border-black/20 p-3">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px]">PBR HDRI ENVIRONMENT</p>
+                  <p className="mt-1 break-all text-[10px] text-black/50">
+                    {selectedModel.hdri_file_name ?? "BUILT-IN NEUTRAL STUDIO"}
+                  </p>
+                </div>
+                {selectedModel.hdri_storage_path && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void handleHdriRemove()}
+                    className={buttonClass}
+                  >
+                    REMOVE HDRI
+                  </button>
+                )}
+              </div>
+              <label className="block text-[11px]">
+                {selectedModel.hdri_storage_path ? "REPLACE HDR / EXR" : "CHOOSE HDR / EXR"}
+                <input
+                  ref={hdriFileRef}
+                  type="file"
+                  accept={hdriFileAccept}
+                  disabled={busy}
+                  onChange={(event) =>
+                    void handleHdriReplace(event.target.files?.[0])
+                  }
+                  className="mt-2 block min-w-0 text-[12px]"
+                />
+              </label>
+              <p className="mt-2 text-[10px] leading-relaxed text-black/45">
+                The file stays private. Public PBR receives a temporary signed URL.
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
