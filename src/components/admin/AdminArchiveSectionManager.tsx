@@ -182,7 +182,7 @@ export default function AdminArchiveSectionManager({
 
         <div className="border-t border-black/15">
           {loading ? (
-            <p className="py-4 text-[13px] text-black/50">Loading…</p>
+            <p className="py-4 text-[13px] text-black/50">...</p>
           ) : (
             sections.map((section) => (
               <button

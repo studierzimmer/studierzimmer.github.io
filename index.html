@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <title>STUDIER ZIMMER</title>
     <meta name="description" content="GBRLD.SPACE" />
     <meta name="author" content="GBRLD.SPACE" />
@@ -27,15 +30,24 @@
         font-display: swap;
       }
 
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        margin: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+
       body {
         font-family: 'SuisseIntl', sans-serif;
         letter-spacing: 0.05em;
         scroll-behavior: smooth;
         scrollbar-width: none; /* Firefox */
         -ms-overflow-style: none; /* IE and Edge */
-        overflow: hidden;
         touch-action: none;
-        height: 100vh;
       }
 
       body::-webkit-scrollbar {
@@ -59,7 +71,7 @@ input.search-input:focus {
 }
     </style>
   </head>
-  <body class="overflow-scroll scrollbar-hide">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

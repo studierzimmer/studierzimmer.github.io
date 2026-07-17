@@ -304,7 +304,7 @@ export default function AdminThreeDModelManager({
         </div>
 
         {loading ? (
-          <p className="text-[13px] text-black/50">Loading…</p>
+          <p className="text-[13px] text-black/50">...</p>
         ) : models.length === 0 ? (
           <p className="text-[13px] leading-relaxed text-black/55">
             No Supabase models yet. The local watch remains the public fallback.

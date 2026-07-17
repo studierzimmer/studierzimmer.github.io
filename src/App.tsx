@@ -8,6 +8,7 @@ import {
   BrowserRouter,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from "react-router-dom";
@@ -67,39 +68,52 @@ const WatchRoute = () => {
   );
 };
 
+const AppViewport = () => {
+  const { pathname } = useLocation();
+  const showsOceanBackground = pathname === "/";
+
+  return (
+    <div
+      className={`fixed inset-0 overflow-hidden ${
+        showsOceanBackground ? "bg-transparent" : "bg-white dark:bg-black"
+      }`}
+    >
+      <Toaster />
+      <Sonner />
+
+      <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/archive" element={<Menu />} />
+          <Route path="/message" element={<Message />} />
+          <Route path="/object01" element={<Object01 />} />
+
+          <Route path="/login" element={<AdminRoute />} />
+          <Route path="/admin" element={<AdminRoute />} />
+          <Route path="/3d" element={<WatchRoute />} />
+
+          <Route path="/books" element={<PublicBooksRoute />} />
+          <Route path="/book/:slug" element={<PublicBooksRoute />} />
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
+    </div>
+  );
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
       <TooltipProvider>
-        <div className="min-h-screen overflow-scroll scrollbar-hide bg-white dark:bg-black">
-          <Toaster />
-          <Sonner />
-
-          <BrowserRouter
-            future={{
-              v7_startTransition: true,
-              v7_relativeSplatPath: true,
-            }}
-          >
-            <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
-              <Routes>
-                <Route path="/" element={<Index />} />
-                <Route path="/archive" element={<Menu />} />
-                <Route path="/message" element={<Message />} />
-                <Route path="/object01" element={<Object01 />} />
-
-                <Route path="/login" element={<AdminRoute />} />
-                <Route path="/admin" element={<AdminRoute />} />
-                <Route path="/3d" element={<WatchRoute />} />
-
-                <Route path="/books" element={<PublicBooksRoute />} />
-                <Route path="/book/:slug" element={<PublicBooksRoute />} />
-
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
-        </div>
+        <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
+          <AppViewport />
+        </BrowserRouter>
       </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>

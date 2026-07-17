@@ -889,9 +889,7 @@ export default function AdminBookManager({
             </div>
 
             {loadingBooks ? (
-              <p className="text-[14px]">
-                Loading…
-              </p>
+              <p className="text-[14px]">...</p>
             ) : books.length === 0 ? (
               <p className="text-[14px] leading-relaxed text-black/60">
                 No books yet. Create
@@ -1273,7 +1271,7 @@ export default function AdminBookManager({
                 </div>
 
                 {loadingPages ? (
-                  <p>Loading pages…</p>
+                  <p>...</p>
                 ) : pages.length === 0 ? (
                   <div className="border border-black/15 p-8 text-center text-black/50">
                     THIS FOLDER IS EMPTY

@@ -24,7 +24,7 @@ export default function AdminPortal({
       <div
         className={`${screenPosition} inset-0 z-[100] flex items-center justify-center bg-white text-black`}
       >
-        <div className="animate-pulse">CHECKING LOGIN…</div>
+        <div className="animate-pulse">...</div>
       </div>
     );
   }

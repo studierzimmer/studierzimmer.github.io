@@ -73,14 +73,22 @@ input.search-input:-webkit-autofill:active {
 }
 
 .mask-circle.is-closing {
-  animation: reveal-elastic 3s 0s reverse both;
+  animation: reveal-elastic-out 5s 2s reverse both;
 }
 
 @keyframes reveal-elastic {
   0% { transform: scale(0); }
-  50% { transform: scale(1.25); }
+  50% { transform: scale(1.7); }
   72% { transform: scale(0.92); }
   88% { transform: scale(9); }
+  100% { transform: scale(9); }
+}
+
+@keyframes reveal-elastic-out {
+  0% { transform: scale(0); }
+  50% { transform: scale(0); }
+  72% { transform: scale(1.7); }
+  88% { transform: scale(0.72); }
   100% { transform: scale(9); }
 }
 
@@ -248,7 +256,7 @@ input.search-input:-webkit-autofill:active {
 
 .index-route-shell.is-leaving {
   pointer-events: none;
-  animation: index-route-balloon-out 900ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+  animation: index-route-balloon-out 400ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
 }
 
 @keyframes index-route-balloon-out {
@@ -311,14 +319,18 @@ type ListSnapshot = {
 };
 
 const ABOUT_TEXT =
-  "A short biography will appear here. This text can be replaced when the final copy is ready.";
+  "Gabriel Dell'Aiuto. b. 1996. TEXT 2";
 
 const Index = () => {
   const navigate = useNavigate();
 
+  const returningToIntroRef = useRef(
+    sessionStorage.getItem(BOOK_INTRO_RETURN_KEY) === "true"
+  );
+  const returningToIntro = returningToIntroRef.current;
   const returningFromBookRef = useRef(
     sessionStorage.getItem(BOOK_INDEX_RETURN_KEY) === "true" ||
-      sessionStorage.getItem(BOOK_INTRO_RETURN_KEY) === "true" ||
+      returningToIntro ||
       sessionStorage.getItem("bookOpenedFromStartup") === "true"
   );
   const returningFromBook = returningFromBookRef.current;
@@ -447,7 +459,16 @@ const Index = () => {
 
     const KEY = "__GLOBAL_SKY_OCEAN_BG_ROOT__";
     const windowWithBackgroundRoot = window as typeof window & Record<string, unknown>;
-    if (windowWithBackgroundRoot[KEY]) return;
+    const existingHost = document.getElementById("global-sky-ocean-bg");
+
+    if (windowWithBackgroundRoot[KEY]) {
+      if (existingHost) {
+        existingHost.style.display = "block";
+        existingHost.style.zIndex = "0";
+      }
+
+      return;
+    }
 
     const host = document.createElement("div");
     host.id = "global-sky-ocean-bg";
@@ -470,7 +491,9 @@ const Index = () => {
     windowWithBackgroundRoot[KEY] = root;
   }, []);
 
-  const initialStage = (sessionStorage.getItem(STORAGE_KEYS.stage) as Stage) || "intro";
+  const initialStage = returningToIntro
+    ? "intro"
+    : (sessionStorage.getItem(STORAGE_KEYS.stage) as Stage) || "intro";
   const initialActiveButton = sessionStorage.getItem(STORAGE_KEYS.activeButton) || null;
   const initialSearchOpen = sessionStorage.getItem(STORAGE_KEYS.searchOpen) === "true";
   const initialSearchQuery = sessionStorage.getItem(STORAGE_KEYS.searchQuery) || "";
@@ -526,6 +549,10 @@ const Index = () => {
   );
   const introTransitionTimerRef = useRef<number | null>(null);
   const [revealDone, setRevealDone] = useState<boolean>(() => {
+    if (returningFromBook) {
+      return false;
+    }
+
     try {
       return sessionStorage.getItem("revealDone") === "true";
     } catch {
@@ -608,6 +635,7 @@ const Index = () => {
     const bg = document.getElementById("global-sky-ocean-bg");
     if (bg) {
       bg.style.display = "block";
+      bg.style.zIndex = "0";
     }
   }, [returningFromBook]);
 
@@ -661,14 +689,14 @@ const Index = () => {
   useEffect(() => {
     const splashAlreadyShown = sessionStorage.getItem(STORAGE_KEYS.splash);
 
-    if (!splashAlreadyShown && stage === "intro") {
+    if (!splashAlreadyShown && stage === "intro" && !returningFromBook) {
       setShowSplash(true);
     } else {
       setIntroVisible(true);
     }
 
     setHasCheckedSplash(true);
-  }, [stage]);
+  }, [returningFromBook, stage]);
 
   const handleLoadingComplete = useCallback(() => {
     sessionStorage.setItem(STORAGE_KEYS.splash, "true");
@@ -1354,36 +1382,36 @@ const Index = () => {
                 className={`intro-elastic-item ${introItemMotionClass} text-[16px] md:text-[16px] text-left px-10 mb-4 cursor-pointer leading-wide tracking-wide break-keep`}
                 onClick={handleBackToIntro}
               >
-                Hello,
-                <br />
-                My name is Gabriel Dell&apos;Aiuto
+                TEXT 1
                 <br />
               </p>
 
               <div className="flex items-center justify-center gap-2">
                 <button
-                  onClick={handleStart}
+                  onClick={handleReturnToBook}
                   disabled={!introItemsEntered || introLeaving}
                   className={`intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
                 >
-                  <span className="animate-bounce">START</span>
+                  <span className="animate-bounce">BACK</span>
                 </button>
 
                 {returnBookSession && (
                   <button
                     type="button"
-                    onClick={handleReturnToBook}
+                    onClick={handleStart}
                     disabled={!introItemsEntered || revealClosing}
                     className={`intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
                   >
-                    BACK
+                    START
                   </button>
                 )}
               </div>
             </div>
 
             <div
-              className="absolute left-1/2 w-full max-w-md -translate-x-1/2 bg-alpha px-10 select-none md:max-w-2xl"
+              className={`absolute left-1/2 w-full max-w-md -translate-x-1/2 bg-alpha px-10 select-none md:max-w-2xl ${
+                stage === "intro" ? "pointer-events-none" : ""
+              }`}
               style={{ top: "calc(50% - 24px)" }}
             >
               <div className="flex min-h-12 items-center justify-center gap-5 text-[16px] md:gap-10 md:text-[16px]">
@@ -1407,7 +1435,7 @@ const Index = () => {
                       onClick={handleArchiveToggle}
                       aria-expanded={archiveControlsMounted}
                       className={`px-2 py-[0.5px] select-none transition-all hover:scale-110 active:scale-110 ${
-                        archiveControlsMounted ? "underline underline-offset-4" : ""
+                        archiveControlsMounted ? "animate-bounce" : ""
                       } ${exploreMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
                     >
                       ARCHIVE
@@ -1422,10 +1450,10 @@ const Index = () => {
                       onClick={handleAboutToggle}
                       aria-expanded={aboutOpen}
                       className={`px-2 py-[0.5px] select-none transition-all hover:scale-110 active:scale-110 ${
-                        aboutOpen ? "underline underline-offset-4" : ""
+                        aboutOpen ? "animate-bounce" : ""
                       } ${exploreMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
                     >
-                      ABOUT
+                      BIO
                     </button>
                   </div>
                 </motion.div>
@@ -1477,7 +1505,7 @@ const Index = () => {
                 <motion.div
                   key="archive-controls"
                   initial={false}
-                  className={`mx-auto mt-7 pb-0 text-center leading-[2] transition-opacity duration-500 ${
+                  className={`mx-auto mt-10 pb-0 text-center leading-[2] transition-opacity duration-500 ${
                     exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                   }`}
                 >
@@ -1493,16 +1521,16 @@ const Index = () => {
                         }
                         className="inline-flex max-w-full items-baseline gap-2 transition-transform hover:scale-105 active:scale-105"
                       >
-                        <span className="shrink-0 text-black/50">FEATURED BOOK</span>
+                        <span className="shrink-0 text-black">COVER</span> <br /> <br />
                         <span className="truncate">{featuredBook.title}</span>
                       </button>
                     ) : booksLoading ? (
-                      <span className="text-black/50">LOADING BOOKS...</span>
+                      <span className="text-black/50">...</span>
                     ) : booksError ? (
                       <button
                         type="button"
                         onClick={() => void loadPublishedBooks()}
-                        className="text-black/60 underline underline-offset-4"
+                        className="text-black/60 bounce"
                       >
                         RETRY BOOK LIST
                       </button>
@@ -1519,7 +1547,7 @@ const Index = () => {
                       <button
                         onClick={handleSearchClick}
                         className={`z-10 flex items-center text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
-                          activeButton === "search" ? "underline" : "bg-alpha"
+                          activeButton === "search" ? "animate-bounce" : "bg-alpha"
                         }`}
                       >
                         search
@@ -1537,7 +1565,7 @@ const Index = () => {
                             handleArchiveClick(section.slug);
                           }}
                           className={`text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
-                            activeButton === section.slug ? "underline" : "bg-alpha"
+                            activeButton === section.slug ? "animate-bounce" : "bg-alpha"
                           }`}
                         >
                           {section.name}
@@ -1588,9 +1616,7 @@ const Index = () => {
                       {...archivePieceMotion(0, 2)}
                       className="archive-elastic-item px-2 text-[14px] md:text-[16px]"
                     >
-                      <p className="mb-3 text-[11px] tracking-[0.16em] text-black/50">
-                        ABOUT
-                      </p>
+
                       <p>{ABOUT_TEXT}</p>
                     </motion.div>
                   </motion.div>
@@ -1610,8 +1636,8 @@ const Index = () => {
                 className={`index-elastic-item item-list ${indexContentMotionClass}`}
               >
               <div className="grid grid-cols-2 backdrop-blur-[1px] text-black border-black/40 text-[16px] md:text-[16px] font-light">
-                <div className="py-[0.5px]">FIELD</div>
-                <div className="py-[0.5px]">NAME</div>
+                <div className="py-[0.5px]">TAG</div>
+                <div className="py-[0.5px]">TITLE</div>
               </div>
 
               {!booksLoading && !booksError && allItems.length === 0 ? (

@@ -20,6 +20,7 @@ import {
   Environment,
   Html,
   OrbitControls,
+  useEnvironment,
   useGLTF,
   useProgress,
 } from "@react-three/drei";
@@ -63,6 +64,7 @@ type ModelMotion = "outside" | "entering" | "visible" | "leaving";
 
 const MODEL_SHRINK_DURATION = 700;
 const MODEL_GROW_DURATION = 940;
+const MODEL_CATALOG_CACHE_DURATION = 12 * 60 * 1000;
 
 const RENDER_MODES: Array<{ id: RenderMode; label: string }> = [
   { id: "pbr", label: "PBR" },
@@ -97,6 +99,53 @@ const DEFAULT_MODEL: ThreeDModel = {
   hdri_public_url: null,
 };
 
+let publicModelCatalogCache: {
+  expiresAt: number;
+  models: ThreeDModel[];
+} | null = null;
+let publicModelCatalogRequest: Promise<ThreeDModel[]> | null = null;
+
+async function loadPublicModelCatalog(
+  forceRefresh = false
+): Promise<ThreeDModel[]> {
+  const now = Date.now();
+
+  if (forceRefresh) {
+    publicModelCatalogCache = null;
+    publicModelCatalogRequest = null;
+  } else if (
+    publicModelCatalogCache &&
+    publicModelCatalogCache.expiresAt > now
+  ) {
+    return publicModelCatalogCache.models;
+  } else if (publicModelCatalogRequest) {
+    return publicModelCatalogRequest;
+  }
+
+  const request = listPublishedThreeDModels().then((models) => {
+    publicModelCatalogCache = {
+      expiresAt: Date.now() + MODEL_CATALOG_CACHE_DURATION,
+      models,
+    };
+
+    return models;
+  });
+
+  publicModelCatalogRequest = request;
+
+  try {
+    return await request;
+  } finally {
+    if (publicModelCatalogRequest === request) {
+      publicModelCatalogRequest = null;
+    }
+  }
+}
+
+function availableModels(remoteModels: ThreeDModel[]): ThreeDModel[] {
+  return remoteModels.length > 0 ? remoteModels : [DEFAULT_MODEL];
+}
+
 const watchStudioStyles = `
 .watch-studio {
   opacity: 0;
@@ -127,8 +176,7 @@ const watchStudioStyles = `
   will-change: transform, opacity;
 }
 
-.watch-studio-piece.is-outside,
-.watch-model-stage.is-outside {
+.watch-studio-piece.is-outside {
   transform: scale(0);
   opacity: 0;
   pointer-events: none;
@@ -153,6 +201,12 @@ const watchStudioStyles = `
   transform-origin: 50% 50%;
   will-change: transform, opacity, filter;
   backface-visibility: hidden;
+}
+
+.watch-model-stage.is-outside {
+  transform: scale(1);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .watch-model-stage.is-entering {
@@ -216,7 +270,7 @@ const watchStudioStyles = `
 }
 `;
 
-function LoadingModel({ label = "LOADING MODEL…" }: { label?: string }) {
+function LoadingModel({ label = "..." }: { label?: string }) {
   return (
     <Html center>
       <div className="whitespace-nowrap rounded-full bg-white/80 px-4 py-2 text-[11px] tracking-[0.16em] text-black/55 backdrop-blur-md">
@@ -227,35 +281,53 @@ function LoadingModel({ label = "LOADING MODEL…" }: { label?: string }) {
 }
 
 function ModelLoadingOverlay({
+  catalogReady,
+  geometryReady,
   complete,
   onCompleted,
 }: {
+  catalogReady: boolean;
+  geometryReady: boolean;
   complete: boolean;
   onCompleted: () => void;
 }) {
   const { active, progress } = useProgress();
   const [visible, setVisible] = useState(true);
+  const [exiting, setExiting] = useState(false);
   const [displayedProgress, setDisplayedProgress] = useState(0);
   const completedRef = useRef(false);
 
   useEffect(() => {
-    if (active) {
-      setVisible(true);
-    }
-
-    const target = complete ? 100 : active ? Math.min(progress, 99.5) : 0;
+    const target = complete
+      ? 100
+      : !catalogReady
+        ? 8
+        : active
+          ? Math.min(92, 12 + progress * 0.8)
+          : geometryReady
+            ? 97
+            : 88;
     let animationFrame = 0;
     let cancelled = false;
 
     const advance = () => {
       setDisplayedProgress((current) => {
-        const difference = target - current;
+        const nonRegressiveTarget = Math.max(current, target);
+        const difference = nonRegressiveTarget - current;
 
-        if (Math.abs(difference) < 0.1) return target;
+        if (Math.abs(difference) < 0.05) return nonRegressiveTarget;
 
-        if (!cancelled) animationFrame = window.requestAnimationFrame(advance);
-        return current + difference * 0.14;
+        return Math.min(
+          complete ? 100 : 99,
+          current +
+            Math.max(
+              complete ? 0.35 : 0.08,
+              difference * (complete ? 0.28 : 0.12)
+            )
+        );
       });
+
+      if (!cancelled) animationFrame = window.requestAnimationFrame(advance);
     };
 
     animationFrame = window.requestAnimationFrame(advance);
@@ -264,17 +336,19 @@ function ModelLoadingOverlay({
       cancelled = true;
       window.cancelAnimationFrame(animationFrame);
     };
-  }, [active, complete, progress]);
+  }, [active, catalogReady, complete, geometryReady, progress]);
 
   useEffect(() => {
     if (!complete || displayedProgress < 100 || completedRef.current) return;
 
     completedRef.current = true;
-    const hideTimeout = window.setTimeout(() => setVisible(false), 180);
-    const revealTimeout = window.setTimeout(onCompleted, 360);
+    onCompleted();
+
+    const fadeTimeout = window.setTimeout(() => setExiting(true), 120);
+    const hideTimeout = window.setTimeout(() => setVisible(false), 680);
 
     return () => {
-      window.clearTimeout(revealTimeout);
+      window.clearTimeout(fadeTimeout);
       window.clearTimeout(hideTimeout);
     };
   }, [complete, displayedProgress, onCompleted]);
@@ -284,10 +358,15 @@ function ModelLoadingOverlay({
   const roundedProgress = Math.min(100, Math.max(0, Math.round(displayedProgress)));
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[25] flex items-center justify-center px-8">
-      <div className="watch-studio-piece is-entering w-full max-w-[260px] bg-white/88 px-5 py-4 text-black shadow-[0_12px_50px_rgba(0,0,0,0.12)] backdrop-blur-md">
+    <div
+      data-model-loading-overlay="true"
+      className={`pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-white px-8 transition-opacity duration-500 ${
+        exiting ? "opacity-0" : "opacity-100"
+      }`}
+    >
+      <div className="w-full max-w-[260px] bg-white px-5 py-4 text-black">
         <div className="mb-3 flex items-center justify-between text-[10px] tracking-[0.14em]">
-          <span>LOADING MODEL</span>
+          <span>...</span>
           <span className="tabular-nums">{roundedProgress}%</span>
         </div>
         <div
@@ -389,6 +468,28 @@ function environmentUrlFor(model: ThreeDModel): string {
   // signed tokens contain dots of their own, so provide a harmless fragment
   // with the real extension. URL fragments are not sent to storage.
   return extension ? `${signedUrl}#environment.${extension}` : signedUrl;
+}
+
+function preloadThreeDModelAssets(model: ThreeDModel): void {
+  if (isStlModel(model)) {
+    useLoader.preload(STLLoader, model.public_url);
+  } else {
+    useGLTF.preload(model.public_url);
+  }
+
+  useEnvironment.preload({ files: environmentUrlFor(model) });
+}
+
+export async function preloadWatchStudioExperience(): Promise<void> {
+  try {
+    const models = availableModels(await loadPublicModelCatalog());
+    const featuredModel =
+      models.find((model) => model.is_featured) ?? models[0];
+
+    preloadThreeDModelAssets(featuredModel);
+  } catch {
+    preloadThreeDModelAssets(DEFAULT_MODEL);
+  }
 }
 
 function createStlMaterial(mode: RenderMode, plasterColor: string): Material {
@@ -664,6 +765,20 @@ function ModelAsset({
   );
 }
 
+function ModelCommitReady({
+  modelId,
+  onReady,
+}: {
+  modelId: string;
+  onReady: (modelId: string) => void;
+}) {
+  useLayoutEffect(() => {
+    onReady(modelId);
+  }, [modelId, onReady]);
+
+  return null;
+}
+
 function ResetModelCamera({
   modelKey,
   controlsRef,
@@ -691,6 +806,42 @@ function ResetModelCamera({
   return null;
 }
 
+function SceneReadySignal({
+  ready,
+  readinessKey,
+  onReady,
+}: {
+  ready: boolean;
+  readinessKey: string;
+  onReady: (readinessKey: string) => void;
+}) {
+  const renderedFramesRef = useRef(0);
+  const reportedRef = useRef(false);
+
+  useEffect(() => {
+    renderedFramesRef.current = 0;
+    reportedRef.current = false;
+  }, [readinessKey]);
+
+  useFrame(() => {
+    if (!ready) {
+      renderedFramesRef.current = 0;
+      return;
+    }
+
+    if (reportedRef.current) return;
+
+    renderedFramesRef.current += 1;
+
+    if (renderedFramesRef.current < 6) return;
+
+    reportedRef.current = true;
+    onReady(readinessKey);
+  });
+
+  return null;
+}
+
 export default function WatchStudio({ onBack }: WatchStudioProps) {
   const [entered, setEntered] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -702,6 +853,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   const [modelListOpen, setModelListOpen] = useState(false);
   const [modelMotion, setModelMotion] = useState<ModelMotion>("outside");
   const [modelGeometryReady, setModelGeometryReady] = useState(false);
+  const [modelSceneReady, setModelSceneReady] = useState(false);
   const [modelLoadError, setModelLoadError] = useState(false);
   const [modelListNotice, setModelListNotice] = useState<string | null>(null);
   const controlsRef = useRef<OrbitControlsImpl>(null);
@@ -715,12 +867,18 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? DEFAULT_MODEL;
   const selectedModelIsStl = isStlModel(selectedModel);
   const selectedEnvironmentUrl = environmentUrlFor(selectedModel);
+  const modelReadinessKey = `${selectedModel.public_url}|${selectedEnvironmentUrl}`;
   const sceneMode = renderMode;
 
-  const loadModels = useCallback(async () => {
+  const loadModels = useCallback(async (forceRefresh = false) => {
+    setModelGeometryReady(false);
+    setModelSceneReady(false);
+    setModelLoadError(false);
+    setModelMotion("outside");
+
     try {
-      const remoteModels = await listPublishedThreeDModels();
-      const nextModels = remoteModels.length > 0 ? remoteModels : [DEFAULT_MODEL];
+      const remoteModels = await loadPublicModelCatalog(forceRefresh);
+      const nextModels = availableModels(remoteModels);
       setModels(nextModels);
       setSelectedModelId((current) =>
         nextModels.some((model) => model.id === current)
@@ -748,14 +906,6 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   useEffect(() => {
     if (managerOpen) setModelListOpen(false);
   }, [managerOpen]);
-
-  useEffect(() => {
-    if (!catalogReady) return;
-
-    setModelGeometryReady(false);
-    setModelLoadError(false);
-    setModelMotion("outside");
-  }, [catalogReady, selectedModel.hdri_public_url, selectedModel.public_url]);
 
   useEffect(() => {
     return () => {
@@ -786,12 +936,19 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       ? "is-entering"
       : "is-visible";
 
+  const modelMotionClass = `is-${modelMotion}`;
+
   const modelAssetsComplete =
     catalogReady &&
-    (modelLoadError ||
-      (modelGeometryReady &&
-        !loadingProgress.active &&
-        loadingProgress.progress >= 99.9));
+    (modelLoadError || modelSceneReady);
+
+  const trackedAssetsReady =
+    catalogReady &&
+    modelGeometryReady &&
+    !loadingProgress.active &&
+    (loadingProgress.progress >= 99.9 ||
+      loadingProgress.total === 0 ||
+      loadingProgress.loaded >= loadingProgress.total);
 
   const handleModelGeometryReady = useCallback(
     (modelId: string) => {
@@ -800,6 +957,15 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       }
     },
     [selectedModel.id]
+  );
+
+  const handleSceneReady = useCallback(
+    (readinessKey: string) => {
+      if (readinessKey === modelReadinessKey) {
+        setModelSceneReady(true);
+      }
+    },
+    [modelReadinessKey]
   );
 
   const handleModelFullyLoaded = useCallback(() => {
@@ -835,6 +1001,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         if (!nextModelId) return;
 
         setModelGeometryReady(false);
+        setModelSceneReady(false);
         setModelLoadError(false);
         setModelMotion("outside");
         setSelectedModelId(nextModelId);
@@ -879,6 +1046,8 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       <style>{watchStudioStyles}</style>
       <ModelLoadingOverlay
         key={`${selectedModel.public_url}-${selectedEnvironmentUrl}`}
+        catalogReady={catalogReady}
+        geometryReady={modelGeometryReady}
         complete={modelAssetsComplete}
         onCompleted={handleModelFullyLoaded}
       />
@@ -953,6 +1122,8 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
                 key={model.id}
                 type="button"
                 onClick={() => handleModelSelect(model.id)}
+                onPointerEnter={() => preloadThreeDModelAssets(model)}
+                onFocus={() => preloadThreeDModelAssets(model)}
                 className={`watch-model-list-item grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-black/15 px-1 py-4 text-left transition-colors hover:bg-black/[0.035] ${
                   selected ? "text-black" : "text-black/65"
                 }`}
@@ -993,7 +1164,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       )}
 
       <div
-        className={`watch-model-stage watch-studio-canvas absolute inset-0 ${modelMotion}`}
+        className={`watch-model-stage watch-studio-canvas absolute inset-0 ${modelMotionClass}`}
       >
         <Canvas
           shadows={sceneMode !== "pen"}
@@ -1050,27 +1221,41 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
             controlsRef={controlsRef}
           />
 
+          <SceneReadySignal
+            ready={trackedAssetsReady}
+            readinessKey={modelReadinessKey}
+            onReady={handleSceneReady}
+          />
+
           <ModelErrorBoundary
             resetKey={selectedModel.public_url}
             onError={() => setModelLoadError(true)}
           >
             <Suspense fallback={null}>
               {catalogReady && (
-                <ModelAsset
-                  key={`${selectedModel.public_url}-${sceneMode}`}
-                  model={selectedModel}
-                  mode={sceneMode}
-                  onReady={handleModelGeometryReady}
-                />
+                <>
+                  <ModelAsset
+                    key={`${selectedModel.public_url}-${sceneMode}`}
+                    model={selectedModel}
+                    mode={sceneMode}
+                    onReady={handleModelGeometryReady}
+                  />
+                  <ModelCommitReady
+                    modelId={selectedModel.id}
+                    onReady={handleModelGeometryReady}
+                  />
+                </>
               )}
             </Suspense>
           </ModelErrorBoundary>
 
           {sceneMode === "pbr" && (
-            <Environment
-              key={selectedEnvironmentUrl}
-              files={selectedEnvironmentUrl}
-            />
+            <Suspense fallback={null}>
+              <Environment
+                key={selectedEnvironmentUrl}
+                files={selectedEnvironmentUrl}
+              />
+            </Suspense>
           )}
           {sceneMode !== "pen" && (
             <ContactShadows
@@ -1115,7 +1300,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         <aside className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4 sm:bottom-6">
           <div className="pointer-events-auto flex w-full max-w-4xl flex-col items-center gap-3">
             <div
-              className={`watch-studio-piece max-w-full text-center ${modelMotion}`}
+              className={`watch-studio-piece max-w-full text-center ${modelMotionClass}`}
               style={{ "--watch-delay": "70ms", "--watch-exit-delay": "120ms" } as React.CSSProperties}
             >
               <p className="max-w-[78vw] truncate text-[12px] tracking-[0.08em] text-black">
@@ -1126,7 +1311,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
 
             {selectedModel.description && (
               <div
-                className={`watch-studio-piece max-w-[min(78vw,620px)] text-center ${modelMotion}`}
+                className={`watch-studio-piece max-w-[min(78vw,620px)] text-center ${modelMotionClass}`}
                 style={{ "--watch-delay": "140ms", "--watch-exit-delay": "60ms" } as React.CSSProperties}
               >
                 <p className="truncate text-[10px] tracking-[0.04em] text-black/50">
@@ -1136,7 +1321,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
             )}
 
             <nav
-              className={`watch-studio-piece flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[10px] tracking-[0.12em] text-black ${modelMotion}`}
+              className={`watch-studio-piece flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[10px] tracking-[0.12em] text-black ${modelMotionClass}`}
               style={{ "--watch-delay": "210ms", "--watch-exit-delay": "0ms" } as React.CSSProperties}
               aria-label="3D renderer style"
             >
@@ -1166,7 +1351,9 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
 
       {managerOpen && isAdmin && (
         <section className="fixed inset-x-3 bottom-3 top-20 z-30 flex overflow-hidden rounded-[28px] border border-black/20 bg-white/95 shadow-2xl backdrop-blur-xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:top-20 sm:w-[min(760px,calc(100vw-40px))]">
-          <AdminThreeDModelManager onModelsChanged={() => void loadModels()} />
+          <AdminThreeDModelManager
+            onModelsChanged={() => void loadModels(true)}
+          />
         </section>
       )}
     </div>
