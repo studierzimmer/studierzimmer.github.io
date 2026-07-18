@@ -1153,6 +1153,42 @@ const Index = () => {
     window.dispatchEvent(new CustomEvent("explore-jump"));
   }, []);
 
+  const sendVertical = useCallback((y: number) => {
+    window.dispatchEvent(
+      new CustomEvent("explore-vertical", {
+        detail: { y },
+      })
+    );
+  }, []);
+
+  const startVerticalMovement = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, y: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sendVertical(y);
+    },
+    [sendVertical]
+  );
+
+  const stopVerticalMovement = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      sendVertical(0);
+    },
+    [sendVertical]
+  );
+
+  useEffect(() => {
+    if (exploreMode) return;
+    sendJoystick(0, 0);
+    sendVertical(0);
+  }, [exploreMode, sendJoystick, sendVertical]);
+
   useEffect(() => {
     if (!exploreMode) {
       return;
@@ -1773,32 +1809,69 @@ const Index = () => {
           </div>
 
           {exploreMode && (
-            <div
-              ref={joyBaseRef}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-              role="button"
-              aria-label="Move player; tap the center to jump"
-              tabIndex={-1}
-              className="fixed left-1/2 bottom-[20px] -translate-x-1/2 w-[100px] h-[100px] rounded-full bg-white/5 backdrop-blur-sm flex items-center justify-center"
-              style={{
-                touchAction: "none",
-                zIndex: 20,
-              }}
-            >
-              <div
-                ref={joyKnobRef}
-                className="pointer-events-none flex w-14 h-14 items-center justify-center rounded-full bg-white/10 shadow text-white/55 text-[18px]"
+            <>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label="Move down (Q)"
+                onPointerDown={(event) => startVerticalMovement(event, -1)}
+                onPointerUp={stopVerticalMovement}
+                onPointerCancel={stopVerticalMovement}
+                onLostPointerCapture={() => sendVertical(0)}
+                className="fixed bottom-[48px] flex h-11 w-11 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border border-white/25 bg-transparent text-[12px] font-normal text-white/65 backdrop-blur-sm"
                 style={{
-                  transform: "translate(0px, 0px)",
-                  transition: "transform 120ms ease-out",
+                  left: "calc(50% - 82px)",
+                  zIndex: 20,
                 }}
               >
-                <span aria-hidden="true">↑</span>
+                Q ↓
+              </button>
+              <div
+                ref={joyBaseRef}
+                data-ocean-control
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+                role="button"
+                aria-label="Move player; tap the center to jump"
+                tabIndex={-1}
+                className="fixed left-1/2 bottom-[20px] -translate-x-1/2 w-[100px] h-[100px] rounded-full bg-white/5 backdrop-blur-sm flex items-center justify-center"
+                style={{
+                  touchAction: "none",
+                  zIndex: 20,
+                }}
+              >
+                <div
+                  ref={joyKnobRef}
+                  className="pointer-events-none flex w-14 h-14 items-center justify-center rounded-full bg-white/10 shadow text-white/55 text-[18px]"
+                  style={{
+                    transform: "translate(0px, 0px)",
+                    transition: "transform 120ms ease-out",
+                  }}
+                >
+                  <span aria-hidden="true">↑</span>
+                </div>
               </div>
-            </div>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label="Move up (E)"
+                onPointerDown={(event) => startVerticalMovement(event, 1)}
+                onPointerUp={stopVerticalMovement}
+                onPointerCancel={stopVerticalMovement}
+                onLostPointerCapture={() => sendVertical(0)}
+                className="fixed bottom-[48px] flex h-11 w-11 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border border-white/25 bg-transparent text-[12px] font-normal text-white/65 backdrop-blur-sm"
+                style={{
+                  left: "calc(50% + 82px)",
+                  zIndex: 20,
+                }}
+              >
+                E ↑
+              </button>
+            </>
           )}
 
           {((!revealDone && (revealPlaying || returningFromBook)) ||
