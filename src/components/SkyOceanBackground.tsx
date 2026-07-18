@@ -23,11 +23,12 @@ if (typeof window !== "undefined") {
 
 const playerRef = { current: null as THREE.Group | null };
 const PLAYER_GROUND_Y = 15;
+const PLAYER_SCALE = 10;
 const JUMP_VELOCITY = 38;
 const JUMP_GRAVITY = 95;
 const SEA_LEVEL_Y = 0;
 // Edit this value to move the underwater floor up or down.
-const SEA_FLOOR_Y = -58;
+const SEA_FLOOR_Y = -174;
 const PLAYER_MAX_Y = 320;
 const OCEAN_SIZE = 120000;
 const SKY_DISTANCE = 48000;
@@ -314,6 +315,86 @@ class RippleField {
           -distanceSquared / (radiusPixels * radiusPixels * 0.72)
         );
         this.velocity[py * RIPPLE_TEXTURE_SIZE + px] += strength * impulse;
+      }
+    }
+  }
+
+  displaceSphere(
+    oldCenter: THREE.Vector3,
+    newCenter: THREE.Vector3,
+    radius: number
+  ) {
+    if (radius <= 0.001) return;
+
+    const worldMinX = Math.min(oldCenter.x, newCenter.x) - radius;
+    const worldMaxX = Math.max(oldCenter.x, newCenter.x) + radius;
+    const worldMinZ = Math.min(oldCenter.z, newCenter.z) - radius;
+    const worldMaxZ = Math.max(oldCenter.z, newCenter.z) + radius;
+    const toPixelX = (worldX: number) =>
+      ((worldX - this.center.x) / RIPPLE_WORLD_SIZE + 0.5) *
+      (RIPPLE_TEXTURE_SIZE - 1);
+    const toPixelZ = (worldZ: number) =>
+      ((worldZ - this.center.y) / RIPPLE_WORLD_SIZE + 0.5) *
+      (RIPPLE_TEXTURE_SIZE - 1);
+    const minX = Math.max(1, Math.floor(toPixelX(worldMinX)));
+    const maxX = Math.min(
+      RIPPLE_TEXTURE_SIZE - 2,
+      Math.ceil(toPixelX(worldMaxX))
+    );
+    const minZ = Math.max(1, Math.floor(toPixelZ(worldMinZ)));
+    const maxZ = Math.min(
+      RIPPLE_TEXTURE_SIZE - 2,
+      Math.ceil(toPixelZ(worldMaxZ))
+    );
+    if (minX > maxX || minZ > maxZ) return;
+
+    const radiusSquared = radius * radius;
+    const submergedColumn = (
+      worldX: number,
+      worldZ: number,
+      sphereCenter: THREE.Vector3
+    ) => {
+      const horizontalDistanceSquared =
+        (worldX - sphereCenter.x) ** 2 +
+        (worldZ - sphereCenter.z) ** 2;
+      if (horizontalDistanceSquared >= radiusSquared) return 0;
+
+      const halfColumn = Math.sqrt(
+        radiusSquared - horizontalDistanceSquared
+      );
+      const bottom = sphereCenter.y - halfColumn;
+      const top = sphereCenter.y + halfColumn;
+      return THREE.MathUtils.clamp(
+        SEA_LEVEL_Y - bottom,
+        0,
+        top - bottom
+      );
+    };
+
+    for (let pz = minZ; pz <= maxZ; pz += 1) {
+      const worldZ =
+        this.center.y +
+        (pz / (RIPPLE_TEXTURE_SIZE - 1) - 0.5) * RIPPLE_WORLD_SIZE;
+      for (let px = minX; px <= maxX; px += 1) {
+        const worldX =
+          this.center.x +
+          (px / (RIPPLE_TEXTURE_SIZE - 1) - 0.5) * RIPPLE_WORLD_SIZE;
+        const oldVolume = submergedColumn(worldX, worldZ, oldCenter);
+        const newVolume = submergedColumn(worldX, worldZ, newCenter);
+        const displacement = (oldVolume - newVolume) / radius;
+        if (Math.abs(displacement) < 0.00001) continue;
+
+        const index = pz * RIPPLE_TEXTURE_SIZE + px;
+        this.height[index] += THREE.MathUtils.clamp(
+          displacement * 0.58,
+          -0.48,
+          0.48
+        );
+        this.velocity[index] += THREE.MathUtils.clamp(
+          displacement * 0.1,
+          -0.08,
+          0.08
+        );
       }
     }
   }
@@ -1017,7 +1098,32 @@ function Player() {
   const exploreEnabled = useRef(false);
   const facing = useRef(new THREE.Vector3(0, 0, 1));
   const previousHeight = useRef(PLAYER_GROUND_Y);
-  const lastWaterRipple = useRef(0);
+  const previousWaterSphereCenter = useRef<THREE.Vector3 | null>(null);
+  const waterSphereCenter = useRef(new THREE.Vector3());
+  const waterSphereOffset = useRef(new THREE.Vector3());
+  const waterSphereUp = useRef(new THREE.Vector3(0, 1, 0));
+  const waterProxy = useMemo(() => {
+    playerScene.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3().setFromObject(playerScene);
+    if (bounds.isEmpty()) {
+      return { localCenter: new THREE.Vector3(0, 0.65, 0), radius: 6.5 };
+    }
+
+    const size = bounds.getSize(new THREE.Vector3()).multiplyScalar(PLAYER_SCALE);
+    const localCenter = bounds
+      .getCenter(new THREE.Vector3())
+      .multiplyScalar(PLAYER_SCALE);
+    const horizontalRadius = Math.max(size.x, size.z) * 0.5;
+    const torsoRadius = size.y * 0.32;
+    return {
+      localCenter,
+      radius: THREE.MathUtils.clamp(
+        Math.max(horizontalRadius, torsoRadius),
+        5,
+        14
+      ),
+    };
+  }, [playerScene]);
 
   useEffect(() => {
     playerScene.traverse((child) => {
@@ -1164,27 +1270,38 @@ function Player() {
     group.current.position.copy(nextPosition);
     rippleField.moveWindowTo(nextPosition.x, nextPosition.z);
 
-    const crossedSurface =
-      (previousHeight.current > SEA_LEVEL_Y && nextPosition.y <= SEA_LEVEL_Y) ||
-      (previousHeight.current < SEA_LEVEL_Y && nextPosition.y >= SEA_LEVEL_Y);
-    const nearSurface = Math.abs(nextPosition.y - SEA_LEVEL_Y) < 11;
-    const isMoving =
-      velocity.current.lengthSq() > 20 || Math.abs(verticalVelocity.current) > 4;
-    if (
-      crossedSurface ||
-      (nearSurface &&
-        isMoving &&
-        state.clock.elapsedTime - lastWaterRipple.current > 0.13)
-    ) {
-      rippleField.addRipple(
-        nextPosition.x,
-        nextPosition.z,
-        crossedSurface ? -1.25 : -0.34,
-        crossedSurface ? 30 : 18
+    waterSphereOffset.current
+      .copy(waterProxy.localCenter)
+      .applyAxisAngle(waterSphereUp.current, group.current.rotation.y);
+    waterSphereCenter.current
+      .copy(nextPosition)
+      .add(waterSphereOffset.current);
+    if (previousWaterSphereCenter.current) {
+      rippleField.displaceSphere(
+        previousWaterSphereCenter.current,
+        waterSphereCenter.current,
+        waterProxy.radius
       );
-      lastWaterRipple.current = state.clock.elapsedTime;
+    } else {
+      previousWaterSphereCenter.current = waterSphereCenter.current.clone();
     }
-    previousHeight.current = nextPosition.y;
+
+    const crossedSurface =
+      (previousHeight.current > SEA_LEVEL_Y &&
+        waterSphereCenter.current.y <= SEA_LEVEL_Y) ||
+      (previousHeight.current < SEA_LEVEL_Y &&
+        waterSphereCenter.current.y >= SEA_LEVEL_Y);
+    if (crossedSurface) {
+      const rising = waterSphereCenter.current.y > previousHeight.current;
+      rippleField.addRipple(
+        waterSphereCenter.current.x,
+        waterSphereCenter.current.z,
+        rising ? 0.38 : -1.25,
+        rising ? waterProxy.radius * 1.45 : Math.max(30, waterProxy.radius * 2.4)
+      );
+    }
+    previousHeight.current = waterSphereCenter.current.y;
+    previousWaterSphereCenter.current.copy(waterSphereCenter.current);
 
     if (input.lengthSq() > 0.01) {
       const targetDirection = move.clone();
@@ -1201,7 +1318,7 @@ function Player() {
     <primitive
       ref={group}
       object={playerScene}
-      scale={10}
+      scale={PLAYER_SCALE}
       position={[0, 15, 0]}
       rotation={[0, Math.PI, 0]}
     />
