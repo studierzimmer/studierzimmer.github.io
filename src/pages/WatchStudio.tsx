@@ -1215,7 +1215,6 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
           })}
         </div>
 
-        <p className="relative mt-3 text-[11px] text-black/40">* Featured</p>
       </aside>
 
       {!authLoading && user && isAdmin && (
@@ -1375,7 +1374,6 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
               style={{ "--watch-delay": "70ms", "--watch-exit-delay": "120ms" } as React.CSSProperties}
             >
               <p className="max-w-[78vw] truncate text-[12px] tracking-[0.08em] text-black">
-                {selectedModel.is_featured ? "FEATURED — " : ""}
                 {selectedModel.name.toUpperCase()}
               </p>
             </div>
@@ -1404,7 +1402,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
                   aria-pressed={renderMode === mode.id}
                   className={`py-1 outline-none transition-opacity focus-visible:underline focus-visible:underline-offset-4 ${
                     renderMode === mode.id
-                      ? "underline decoration-1 underline-offset-4 opacity-100"
+                      ? "animate-bounce decoration-1 opacity-100"
                       : "opacity-45 hover:opacity-100"
                   }`}
                 >
