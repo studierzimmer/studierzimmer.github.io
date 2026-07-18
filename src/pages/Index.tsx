@@ -221,6 +221,17 @@ input.search-input:-webkit-autofill:active {
     font-size: 12px;
   }
 
+  .index-intro-copy,
+  .index-intro-control,
+  .index-main-control-row,
+  .index-main-control-row button,
+  .index-archive-panel,
+  .index-archive-panel button,
+  .index-archive-search-input,
+  .index-list-panel {
+    font-weight: 400;
+  }
+
   .index-archive-panel {
     margin-top: 12px;
     line-height: 1.35;
@@ -228,7 +239,8 @@ input.search-input:-webkit-autofill:active {
 
   .index-archive-featured,
   .index-archive-category-button,
-  .index-archive-search-input {
+  .index-archive-search-input,
+  .index-about-panel {
     font-size: 12px;
   }
 
@@ -1454,7 +1466,7 @@ const Index = () => {
                 <button
                   onClick={handleReturnToBook}
                   disabled={!introItemsEntered || introLeaving}
-                  className={`index-intro-control intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
+                  className={`index-intro-control intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                 >
                   <span className="animate-bounce">BACK</span>
                 </button>
@@ -1464,7 +1476,7 @@ const Index = () => {
                     type="button"
                     onClick={handleStart}
                     disabled={!introItemsEntered || revealClosing}
-                    className={`index-intro-control intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
+                    className={`index-intro-control intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                   >
                     START
                   </button>
@@ -1478,7 +1490,7 @@ const Index = () => {
               }`}
               style={{ top: "calc(50% - 24px)" }}
             >
-              <div className="index-main-control-row flex min-h-12 items-center justify-center gap-5 text-[16px] md:gap-10 md:text-[16px]">
+              <div className="index-main-control-row flex min-h-12 items-center justify-center gap-5 text-[16px] font-normal md:gap-10 md:text-[16px]">
                 <motion.div {...mainControlTranslation(0)}>
                   <div className={`main-control-item item-back ${mainControlMotionClass}`}>
                     <button
@@ -1553,7 +1565,7 @@ const Index = () => {
                     </svg>
 
                     <span
-                      className={`transition-all text-bold whitespace-nowrap ${
+                      className={`whitespace-nowrap font-normal transition-all ${
                         exploreMode ? "max-w-0 opacity-0" : "max-w-[100px] opacity-100"
                       }`}
                     >
@@ -1564,18 +1576,18 @@ const Index = () => {
                 </motion.div>
               </div>
 
-              <AnimatePresence initial={false}>
-              {archiveControlsMounted && (
+              <AnimatePresence initial={false} mode="wait">
+              {archiveControlsMounted ? (
                 <motion.div
                   key="archive-controls"
                   initial={false}
-                  className={`index-archive-panel mx-auto mt-10 pb-0 text-center leading-[2] transition-opacity duration-500 ${
+                  className={`index-archive-panel mx-auto mt-10 pb-0 text-center font-normal leading-[2] transition-opacity duration-500 ${
                     exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                   }`}
                 >
                   <motion.div
                     {...archivePieceMotion(0, archivePieceCount)}
-                    className="index-archive-featured archive-elastic-item item-featured min-h-[32px] text-[14px] md:text-[16px]"
+                    className="index-archive-featured archive-elastic-item item-featured min-h-[32px] text-[16px] md:text-[16px]"
                   >
                     {featuredBook ? (
                       <button
@@ -1610,7 +1622,7 @@ const Index = () => {
                     >
                       <button
                         onClick={handleSearchClick}
-                        className={`index-archive-category-button z-10 flex items-center text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
+                        className={`index-archive-category-button z-10 flex items-center text-[16px] font-normal uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
                           activeButton === "search" ? "animate-bounce" : "bg-alpha"
                         }`}
                       >
@@ -1628,7 +1640,7 @@ const Index = () => {
                           onClick={() => {
                             handleArchiveClick(section.slug);
                           }}
-                          className={`index-archive-category-button text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
+                          className={`index-archive-category-button text-[16px] font-normal uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
                             activeButton === section.slug ? "animate-bounce" : "bg-alpha"
                           }`}
                         >
@@ -1664,32 +1676,28 @@ const Index = () => {
                     </div>
                   </motion.div>
                 </motion.div>
-              )}
-              </AnimatePresence>
-
-              <AnimatePresence initial={false}>
-                {aboutOpen && (
+              ) : aboutOpen ? (
                   <motion.div
                     key="about-panel"
                     initial={false}
-                    className={`mx-auto mt-7 max-w-xl pb-0 text-center leading-[1.55] ${
+                    className={`mx-auto mt-10 max-w-xl pb-0 text-center leading-[1.55] ${
                       exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                     }`}
                   >
                     <motion.div
                       {...archivePieceMotion(0, 2)}
-                      className="archive-elastic-item px-2 text-[14px] md:text-[16px]"
+                      className="index-about-panel archive-elastic-item px-2 text-[16px] font-normal md:text-[16px]"
                     >
 
                       <p>{ABOUT_TEXT}</p>
                     </motion.div>
                   </motion.div>
-                )}
+                ) : null}
               </AnimatePresence>
             </div>
 
             <div
-              className={`index-list-panel ${stage === "list" ? "is-list-open" : "is-list-closed"} absolute py-10 w-full select-none max-w-sm md:max-w-2xl px-10 bg-alpha transition-transform duration-700 text-[16px] md:text-[16px] ease-in-out ${
+              className={`index-list-panel ${stage === "list" ? "is-list-open" : "is-list-closed"} absolute py-10 w-full select-none max-w-sm md:max-w-2xl px-10 bg-alpha transition-transform duration-700 text-[16px] font-normal md:text-[16px] ease-in-out ${
                 stage === "list" ? "translate-y-[45vh]" : "translate-y-[100vh]"
               } ${exploreMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
               style={{
@@ -1699,7 +1707,7 @@ const Index = () => {
               <div
                 className={`index-elastic-item item-list ${indexContentMotionClass}`}
               >
-              <div className="index-list-header grid grid-cols-2 backdrop-blur-[1px] text-black border-black/40 text-[16px] md:text-[16px] font-light">
+              <div className="index-list-header grid grid-cols-2 backdrop-blur-[1px] text-black border-black/40 text-[16px] font-normal md:text-[16px]">
                 <div className="py-[0.5px]">TAG</div>
                 <div className="py-[0.5px]">TITLE</div>
               </div>

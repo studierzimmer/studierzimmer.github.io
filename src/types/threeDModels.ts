@@ -11,6 +11,7 @@ export interface ThreeDModel {
   hdri_storage_path: string | null;
   is_published: boolean;
   is_featured: boolean;
+  is_watch: boolean;
   sort_order: number;
   plaster_color: string;
   created_at: string;
@@ -24,6 +25,7 @@ export interface UpdateThreeDModelInput {
   description?: string;
   is_published?: boolean;
   is_featured?: boolean;
+  is_watch?: boolean;
   sort_order?: number;
   plaster_color?: string;
   hdri_file_name?: string | null;

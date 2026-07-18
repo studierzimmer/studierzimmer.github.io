@@ -38,6 +38,8 @@ import {
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   MOUSE,
+  Object3D,
+  Quaternion,
   Sphere,
   TOUCH,
   Vector3,
@@ -91,6 +93,7 @@ const DEFAULT_MODEL: ThreeDModel = {
   hdri_storage_path: null,
   is_published: true,
   is_featured: true,
+  is_watch: false,
   sort_order: 0,
   plaster_color: DEFAULT_STL_PLASTER_COLOR,
   created_at: "",
@@ -453,6 +456,67 @@ function isStlModel(model: ThreeDModel): boolean {
   return /\.stl$/i.test(model.file_name) || /\.stl$/i.test(model.storage_path);
 }
 
+const WATCH_PIVOT_NAMES = {
+  hour: "hourshand_pivot",
+  minute: "minuteshand_pivot",
+  second: "secondshand_pivot",
+} as const;
+const WATCH_LOCAL_AXIS = new Vector3(0, 0, 1);
+const WATCH_TURN = Math.PI * 2;
+const watchRotation = new Quaternion();
+
+interface WatchPivot {
+  object: Object3D;
+  baseQuaternion: Quaternion;
+}
+
+interface WatchPivots {
+  hour: WatchPivot;
+  minute: WatchPivot;
+  second: WatchPivot;
+}
+
+function findNamedObject(root: Object3D, expectedName: string): Object3D | null {
+  let match: Object3D | null = null;
+
+  root.traverse((object) => {
+    if (!match && object.name.trim().toLowerCase() === expectedName) {
+      match = object;
+    }
+  });
+
+  return match;
+}
+
+function createWatchPivots(root: Object3D): WatchPivots | null {
+  const hour = findNamedObject(root, WATCH_PIVOT_NAMES.hour);
+  const minute = findNamedObject(root, WATCH_PIVOT_NAMES.minute);
+  const second = findNamedObject(root, WATCH_PIVOT_NAMES.second);
+
+  if (!hour || !minute || !second) return null;
+
+  return {
+    hour: { object: hour, baseQuaternion: hour.quaternion.clone() },
+    minute: { object: minute, baseQuaternion: minute.quaternion.clone() },
+    second: { object: second, baseQuaternion: second.quaternion.clone() },
+  };
+}
+
+function applyWatchPivotRotation(pivot: WatchPivot, angle: number): void {
+  watchRotation.setFromAxisAngle(WATCH_LOCAL_AXIS, angle);
+  pivot.object.quaternion.copy(pivot.baseQuaternion).multiply(watchRotation);
+}
+
+function applyLocalTimeToWatch(pivots: WatchPivots, date: Date): void {
+  const seconds = date.getSeconds() + date.getMilliseconds() / 1000;
+  const minutes = date.getMinutes() + seconds / 60;
+  const hours = (date.getHours() % 12) + minutes / 60;
+
+  applyWatchPivotRotation(pivots.second, -(seconds / 60) * WATCH_TURN);
+  applyWatchPivotRotation(pivots.minute, -(minutes / 60) * WATCH_TURN);
+  applyWatchPivotRotation(pivots.hour, -(hours / 12) * WATCH_TURN);
+}
+
 function environmentUrlFor(model: ThreeDModel): string {
   const signedUrl = model.hdri_public_url;
 
@@ -522,6 +586,7 @@ function FittedModel({
 
   const normalizedModel = useMemo(() => {
     const clone = SkeletonUtils.clone(scene);
+    const watchPivots = model.is_watch ? createWatchPivots(clone) : null;
     const overrideMaterial =
       mode === "pbr" ? null : createOverrideMaterial(mode);
     const disposableMaterials = new Set<Material>();
@@ -569,6 +634,7 @@ function FittedModel({
     if (bounds.isEmpty()) {
       return {
         object: clone,
+        watchPivots,
         position: new Vector3(),
         scale: 1,
         overrideMaterial,
@@ -586,6 +652,7 @@ function FittedModel({
 
     return {
       object: clone,
+      watchPivots,
       position: sphere.center.clone().multiplyScalar(-scale),
       scale,
       overrideMaterial,
@@ -593,7 +660,7 @@ function FittedModel({
       creaseLineMaterial,
       disposableGeometries,
     };
-  }, [mode, scene]);
+  }, [mode, model.is_watch, scene]);
 
   const animationMixer = useMemo(
     () => new AnimationMixer(normalizedModel.object),
@@ -626,6 +693,9 @@ function FittedModel({
 
   useFrame((_, delta) => {
     if (animations.length > 0) animationMixer.update(delta);
+    if (normalizedModel.watchPivots) {
+      applyLocalTimeToWatch(normalizedModel.watchPivots, new Date());
+    }
   });
 
   useEffect(() => {
@@ -1101,7 +1171,7 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         <div className="mb-4 flex items-start justify-between gap-5">
           <div>
             <p className="text-[12px] tracking-[0.18em] text-black/45">3D LIBRARY</p>
-            <h1 className="mt-1 text-[22px] font-light">CHOOSE A MODEL</h1>
+            <h1 className="mt-1 text-[22px] font-normal">CHOOSE A MODEL</h1>
           </div>
           <button
             type="button"
@@ -1260,11 +1330,12 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
           {sceneMode !== "pen" && (
             <ContactShadows
               position={[0, -1.9, 0]}
-              scale={6}
-              opacity={sceneMode === "arctic" ? 0.14 : 0.28}
-              blur={2.5}
-              far={4}
+              scale={10}
+              opacity={sceneMode === "arctic" ? 0.12 : 0.24}
+              blur={3.25}
+              far={5}
               resolution={512}
+              smooth
               frames={1}
             />
           )}

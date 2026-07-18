@@ -19,6 +19,7 @@ const PUBLIC_MODEL_COLUMNS = [
   "storage_path",
   "is_published",
   "is_featured",
+  "is_watch",
   "sort_order",
   "plaster_color",
   "hdri_file_name",
@@ -26,6 +27,7 @@ const PUBLIC_MODEL_COLUMNS = [
   "created_at",
   "updated_at",
 ].join(",");
+const LEGACY_PUBLIC_MODEL_COLUMNS = PUBLIC_MODEL_COLUMNS.replace(",is_watch", "");
 
 type ModelFileExtension = "glb" | "stl" | "step" | "stp";
 type ThreeDModelRow = Omit<ThreeDModel, "public_url" | "hdri_public_url">;
@@ -79,6 +81,7 @@ async function mapModel(row: ThreeDModelRow): Promise<ThreeDModel> {
     source_format: row.source_format ?? null,
     hdri_file_name: row.hdri_file_name ?? null,
     hdri_storage_path: row.hdri_storage_path ?? null,
+    is_watch: row.is_watch ?? false,
     public_url: publicUrl,
     hdri_public_url: hdriPublicUrl,
   };
@@ -215,13 +218,27 @@ async function uploadPreparedModelFiles(
 }
 
 export async function listPublishedThreeDModels(): Promise<ThreeDModel[]> {
-  const { data, error } = await supabase
+  let response = await supabase
     .from("models_3d")
     .select(PUBLIC_MODEL_COLUMNS)
     .eq("is_published", true)
     .order("is_featured", { ascending: false })
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
+
+  // Keep existing published models available locally until the watch migration
+  // has been applied to Supabase.
+  if (response.error?.message.includes("is_watch")) {
+    response = await supabase
+      .from("models_3d")
+      .select(LEGACY_PUBLIC_MODEL_COLUMNS)
+      .eq("is_published", true)
+      .order("is_featured", { ascending: false })
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+  }
+
+  const { data, error } = response;
 
   if (error) {
     throw asError(error, "Unable to load the 3D models.");
@@ -268,6 +285,7 @@ export async function createThreeDModel(
       source_format: uploaded.sourceFormat,
       is_published: false,
       is_featured: false,
+      is_watch: false,
       sort_order: sortOrder,
     })
     .select("*")

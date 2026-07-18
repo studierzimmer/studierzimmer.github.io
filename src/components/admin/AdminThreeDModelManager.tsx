@@ -66,6 +66,7 @@ export default function AdminThreeDModelManager({
   const [editDescription, setEditDescription] = useState("");
   const [editPublished, setEditPublished] = useState(false);
   const [editFeatured, setEditFeatured] = useState(false);
+  const [editWatch, setEditWatch] = useState(false);
   const [editSortOrder, setEditSortOrder] = useState(0);
   const [editPlasterColor, setEditPlasterColor] = useState<RgbColor>(
     DEFAULT_PLASTER_COLOR
@@ -118,6 +119,7 @@ export default function AdminThreeDModelManager({
     setEditDescription(selectedModel.description);
     setEditPublished(selectedModel.is_published);
     setEditFeatured(selectedModel.is_featured);
+    setEditWatch(selectedModel.is_watch);
     setEditSortOrder(selectedModel.sort_order);
     setEditPlasterColor(
       hexToRgb(selectedModel.plaster_color) ?? DEFAULT_PLASTER_COLOR
@@ -172,6 +174,7 @@ export default function AdminThreeDModelManager({
         description: editDescription.trim(),
         is_published: editPublished,
         is_featured: editFeatured ? selectedModel.is_featured : false,
+        is_watch: editWatch,
         sort_order: Number.isFinite(editSortOrder) ? editSortOrder : 0,
         ...(isStlModel(selectedModel)
           ? { plaster_color: rgbToHex(editPlasterColor) }
@@ -429,6 +432,21 @@ export default function AdminThreeDModelManager({
               />
               FEATURED — opens first
             </label>
+
+            {modelFormat(selectedModel) === "GLB" && (
+              <label className="flex items-start gap-3 text-[12px] leading-relaxed">
+                <input
+                  type="checkbox"
+                  checked={editWatch}
+                  onChange={(event) => setEditWatch(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  WATCH — use local time with hourshand_pivot,
+                  minuteshand_pivot and secondshand_pivot
+                </span>
+              </label>
+            )}
 
             <div className="border border-dashed border-black/25 p-3">
               <label className="block text-[11px]">

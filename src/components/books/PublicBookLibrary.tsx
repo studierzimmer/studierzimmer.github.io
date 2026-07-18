@@ -1560,7 +1560,7 @@ export default function PublicBookLibrary({
           <div>
 
 
-            <h1 className="mt-1 text-[22px] font-light">
+            <h1 className="mt-1 text-[22px] font-normal">
               ARCHIVE
             </h1>
           </div>
