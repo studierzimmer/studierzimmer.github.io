@@ -57,7 +57,7 @@ const BOOK_SWITCH_ENTER_HOLD_DURATION = 120;
 const BOOK_SWITCH_LEAVE_TOTAL_DURATION =
   BOOK_SWITCH_MOTION_DURATION + BOOK_META_STAGGER_TAIL;
 const BOOK_BACKGROUND_MIX_DURATION = 1180;
-const BOOK_VIEWER_READY_TIMEOUT = 1800;
+const BOOK_VIEWER_READY_TIMEOUT = 6000;
 
 const SCRAMBLE_CHARACTERS =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&@!?/\\[]{}<>+-=*";
@@ -634,13 +634,31 @@ function preloadImage(url: string): Promise<void> {
     };
 
     image.onerror = finish;
+    image.decoding = "async";
     image.src = url;
   });
 }
 
-async function preloadBookOpening(pages: BookPage[]): Promise<void> {
+async function preloadBookOpening(
+  pages: BookPage[],
+  startingPage = 0
+): Promise<void> {
+  const safeStartingPage = Math.min(
+    Math.max(0, Math.floor(startingPage)),
+    Math.max(0, pages.length - 1)
+  );
+  const nearbyPageIndices = [
+    safeStartingPage - 1,
+    safeStartingPage,
+    safeStartingPage + 1,
+    safeStartingPage + 2,
+  ].filter((index) => index >= 0 && index < pages.length);
+  const visiblePages = [...new Set(nearbyPageIndices)].map(
+    (index) => pages[index]
+  );
+
   await Promise.all(
-    pages.slice(0, 2).map((page) => preloadImage(page.public_url))
+    visiblePages.map((page) => preloadImage(page.public_url))
   );
 }
 
@@ -948,12 +966,6 @@ export default function PublicBookLibrary({
 
       try {
         const nextPages = await listBookPages(book.id);
-        await preloadBookOpening(nextPages);
-
-        if (!mountedRef.current) {
-          return;
-        }
-
         const savedSnapshot = savedBookSessionRef.current;
 
         const restoredPage =
@@ -963,6 +975,12 @@ export default function PublicBookLibrary({
                 Math.max(0, nextPages.length - 1)
               )
             : 0;
+
+        await preloadBookOpening(nextPages, restoredPage);
+
+        if (!mountedRef.current) {
+          return;
+        }
 
         viewerReadyBookIdRef.current = null;
 

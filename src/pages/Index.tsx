@@ -206,6 +206,70 @@ input.search-input:-webkit-autofill:active {
 .archive-elastic-item.item-concepts { animation-delay: 280ms; }
 .archive-elastic-item.item-search-field { animation-delay: 350ms; }
 
+@media (max-height: 599px) {
+  .index-main-control-row {
+    min-height: 36px;
+    font-size: 12px;
+  }
+
+  .index-main-control-row button {
+    font-size: 12px;
+  }
+
+  .index-intro-copy,
+  .index-intro-control {
+    font-size: 12px;
+  }
+
+  .index-archive-panel {
+    margin-top: 12px;
+    line-height: 1.35;
+  }
+
+  .index-archive-featured,
+  .index-archive-category-button,
+  .index-archive-search-input {
+    font-size: 12px;
+  }
+
+  .index-archive-featured {
+    min-height: 22px;
+  }
+
+  .index-archive-search-field {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .index-list-panel {
+    top: calc(50% + clamp(64px, 12dvh, 72px));
+    bottom: max(6px, env(safe-area-inset-bottom));
+    height: auto !important;
+    padding-top: 4px !important;
+    padding-bottom: 0 !important;
+    overflow: hidden;
+  }
+
+  .index-list-panel.is-list-open {
+    transform: translateY(0) !important;
+  }
+
+  .index-list-panel.is-list-closed {
+    transform: translateY(calc(100dvh + 100%)) !important;
+  }
+
+  .index-list-header,
+  .index-list-row {
+    font-size: 12px;
+  }
+
+  .index-list-scroll {
+    max-height: none !important;
+    height: calc(100% - 22px);
+    overscroll-behavior: contain;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mask-circle.is-opening,
   .mask-circle.is-closing,
@@ -1379,7 +1443,7 @@ const Index = () => {
               } ${exploreMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
             >
               <p
-                className={`intro-elastic-item ${introItemMotionClass} text-[16px] md:text-[16px] text-left px-10 mb-4 cursor-pointer leading-wide tracking-wide break-keep`}
+                className={`index-intro-copy intro-elastic-item ${introItemMotionClass} text-[16px] md:text-[16px] text-left px-10 mb-4 cursor-pointer leading-wide tracking-wide break-keep`}
                 onClick={handleBackToIntro}
               >
                 TEXT 1
@@ -1390,7 +1454,7 @@ const Index = () => {
                 <button
                   onClick={handleReturnToBook}
                   disabled={!introItemsEntered || introLeaving}
-                  className={`intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
+                  className={`index-intro-control intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
                 >
                   <span className="animate-bounce">BACK</span>
                 </button>
@@ -1400,7 +1464,7 @@ const Index = () => {
                     type="button"
                     onClick={handleStart}
                     disabled={!introItemsEntered || revealClosing}
-                    className={`intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
+                    className={`index-intro-control intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-light hover:scale-110 active:scale-110 transition-all`}
                   >
                     START
                   </button>
@@ -1414,7 +1478,7 @@ const Index = () => {
               }`}
               style={{ top: "calc(50% - 24px)" }}
             >
-              <div className="flex min-h-12 items-center justify-center gap-5 text-[16px] md:gap-10 md:text-[16px]">
+              <div className="index-main-control-row flex min-h-12 items-center justify-center gap-5 text-[16px] md:gap-10 md:text-[16px]">
                 <motion.div {...mainControlTranslation(0)}>
                   <div className={`main-control-item item-back ${mainControlMotionClass}`}>
                     <button
@@ -1505,13 +1569,13 @@ const Index = () => {
                 <motion.div
                   key="archive-controls"
                   initial={false}
-                  className={`mx-auto mt-10 pb-0 text-center leading-[2] transition-opacity duration-500 ${
+                  className={`index-archive-panel mx-auto mt-10 pb-0 text-center leading-[2] transition-opacity duration-500 ${
                     exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                   }`}
                 >
                   <motion.div
                     {...archivePieceMotion(0, archivePieceCount)}
-                    className="archive-elastic-item item-featured min-h-[32px] text-[14px] md:text-[16px]"
+                    className="index-archive-featured archive-elastic-item item-featured min-h-[32px] text-[14px] md:text-[16px]"
                   >
                     {featuredBook ? (
                       <button
@@ -1539,14 +1603,14 @@ const Index = () => {
                     )}
                   </motion.div>
 
-                  <div className="flex flex-wrap items-center justify-center gap-3 uppercase md:gap-10">
+                  <div className="index-archive-category-row flex flex-wrap items-center justify-center gap-2 uppercase md:gap-3">
                     <motion.div
                       {...archivePieceMotion(1, archivePieceCount)}
                       className="archive-elastic-item item-search"
                     >
                       <button
                         onClick={handleSearchClick}
-                        className={`z-10 flex items-center text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
+                        className={`index-archive-category-button z-10 flex items-center text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
                           activeButton === "search" ? "animate-bounce" : "bg-alpha"
                         }`}
                       >
@@ -1564,7 +1628,7 @@ const Index = () => {
                           onClick={() => {
                             handleArchiveClick(section.slug);
                           }}
-                          className={`text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
+                          className={`index-archive-category-button text-[16px] font-light uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
                             activeButton === section.slug ? "animate-bounce" : "bg-alpha"
                           }`}
                         >
@@ -1576,7 +1640,7 @@ const Index = () => {
 
                   <motion.div
                     {...archivePieceMotion(archivePieceCount - 1, archivePieceCount)}
-                    className="archive-elastic-item item-search-field flex justify-center gap-2 py-2"
+                    className="index-archive-search-field archive-elastic-item item-search-field flex justify-center gap-2 py-2"
                   >
                     <div
                       className={`overflow-hidden transition-all duration-300 ease-in-out ${
@@ -1592,7 +1656,7 @@ const Index = () => {
                         onChange={(event) => {
                           setSearchQuery(event.target.value);
                         }}
-                        className="w-full rounded-full border bg-black/0 px-4 py-1 text-[16px] text-black placeholder:text-black/60 backdrop-blur-[1px] select-none md:text-[16px]"
+                        className="index-archive-search-input w-full rounded-full border bg-black/0 px-4 py-1 text-[16px] text-black placeholder:text-black/60 backdrop-blur-[1px] select-none md:text-[16px]"
                         autoComplete="off"
                         inputMode="text"
                         spellCheck={false}
@@ -1625,7 +1689,7 @@ const Index = () => {
             </div>
 
             <div
-              className={`absolute py-10 w-full select-none max-w-sm md:max-w-2xl px-10 bg-alpha transition-transform duration-700 text-[16px] md:text-[16px] ease-in-out ${
+              className={`index-list-panel ${stage === "list" ? "is-list-open" : "is-list-closed"} absolute py-10 w-full select-none max-w-sm md:max-w-2xl px-10 bg-alpha transition-transform duration-700 text-[16px] md:text-[16px] ease-in-out ${
                 stage === "list" ? "translate-y-[45vh]" : "translate-y-[100vh]"
               } ${exploreMode ? "opacity-0 pointer-events-none" : "opacity-100"}`}
               style={{
@@ -1635,7 +1699,7 @@ const Index = () => {
               <div
                 className={`index-elastic-item item-list ${indexContentMotionClass}`}
               >
-              <div className="grid grid-cols-2 backdrop-blur-[1px] text-black border-black/40 text-[16px] md:text-[16px] font-light">
+              <div className="index-list-header grid grid-cols-2 backdrop-blur-[1px] text-black border-black/40 text-[16px] md:text-[16px] font-light">
                 <div className="py-[0.5px]">TAG</div>
                 <div className="py-[0.5px]">TITLE</div>
               </div>
@@ -1647,7 +1711,7 @@ const Index = () => {
               ) : (
                 <div
                   ref={listScrollRef}
-                  className="overflow-y-auto no-scrollbar"
+                  className="index-list-scroll overflow-y-auto no-scrollbar"
                   style={{
                     maxHeight: "calc(30vh - 2rem)",
                   }}
@@ -1675,7 +1739,7 @@ const Index = () => {
                           opacity: { duration: 0.18, delay: index * 0.022 },
                           filter: { duration: 0.22, delay: index * 0.022 },
                         }}
-                        className={`grid origin-center grid-cols-2 text-[16px] md:text-[16px] backdrop-blur-[1px] cursor-pointer ${
+                        className={`index-list-row grid origin-center grid-cols-2 text-[16px] md:text-[16px] backdrop-blur-[1px] cursor-pointer ${
                           isActiveCategory
                             ? "text-black"
                             : "text-gray-700"

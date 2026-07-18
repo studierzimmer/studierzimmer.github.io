@@ -52,6 +52,7 @@ interface FlipEvent<T = unknown> {
 interface PageFaceProps {
   page: BookPage;
   isCover: boolean;
+  onImageReady?: () => void;
 }
 
 interface TapSnapshot {
@@ -147,7 +148,7 @@ function fitOpenSpread(
 }
 
 const PageFace = forwardRef<HTMLDivElement, PageFaceProps>(function PageFace(
-  { page, isCover },
+  { page, isCover, onImageReady },
   ref
 ) {
   return (
@@ -160,6 +161,9 @@ const PageFace = forwardRef<HTMLDivElement, PageFaceProps>(function PageFace(
         src={page.public_url}
         alt={`Page ${page.page_number}: ${page.file_name}`}
         draggable={false}
+        decoding="async"
+        onLoad={onImageReady}
+        onError={onImageReady}
         className="pointer-events-none h-full w-full select-none object-cover object-center"
       />
     </div>
@@ -200,6 +204,16 @@ export default function FoldingBookViewer({
     Math.max(0, Math.floor(initialPage)),
     Math.max(0, pages.length - 1)
   );
+  const flipInitializedRef = useRef(false);
+  const readyNotifiedRef = useRef(false);
+  const readyPageIndicesRef = useRef(new Set<number>());
+  const initialVisiblePageIndicesRef = useRef(
+    new Set(
+      [safeInitialPage - 1, safeInitialPage, safeInitialPage + 1].filter(
+        (index) => index >= 0 && index < pages.length
+      )
+    )
+  );
 
   if (activeBookIdRef.current !== book.id) {
     activeBookIdRef.current = book.id;
@@ -217,6 +231,33 @@ export default function FoldingBookViewer({
   const zoomScale = useMotionValue(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
+
+  const notifyReadyWhenPaintable = useCallback(() => {
+    if (
+      readyNotifiedRef.current ||
+      !flipInitializedRef.current ||
+      ![...initialVisiblePageIndicesRef.current].every((index) =>
+        readyPageIndicesRef.current.has(index)
+      )
+    ) {
+      return;
+    }
+
+    readyNotifiedRef.current = true;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => onReady?.(book.id));
+    });
+  }, [book.id, onReady]);
+
+  const handlePageImageReady = useCallback(
+    (pageIndex: number) => {
+      if (!initialVisiblePageIndicesRef.current.has(pageIndex)) return;
+
+      readyPageIndicesRef.current.add(pageIndex);
+      notifyReadyWhenPaintable();
+    },
+    [notifyReadyWhenPaintable]
+  );
 
   const stopZoomAnimations = useCallback(() => {
     zoomAnimationsRef.current.forEach((animation) => animation.stop());
@@ -811,7 +852,8 @@ export default function FoldingBookViewer({
                   setCurrentPage(event.data.page);
                   onPageChange?.(event.data.page);
                   synchronizeSinglePageCenter(event.object);
-                  onReady?.(book.id);
+                  flipInitializedRef.current = true;
+                  notifyReadyWhenPaintable();
                 }}
                 onFlip={(event: FlipEvent<number>) => {
                   currentPageRef.current = event.data;
@@ -834,6 +876,7 @@ export default function FoldingBookViewer({
                     key={page.id}
                     page={page}
                     isCover={index === 0 || index === pages.length - 1}
+                    onImageReady={() => handlePageImageReady(index)}
                   />
                 ))}
               </HTMLFlipBook>
