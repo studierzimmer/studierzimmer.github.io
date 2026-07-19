@@ -15,6 +15,7 @@ import type {
 } from "@/types/books";
 import AdminThreeDModelManager from "@/components/admin/AdminThreeDModelManager";
 import AdminArchiveSectionManager from "@/components/admin/AdminArchiveSectionManager";
+import AdminAnalyticsInfo from "@/components/admin/AdminAnalyticsInfo";
 import BookBackgroundColorPicker from "@/components/admin/BookBackgroundColorPicker";
 import {
   createBook,
@@ -171,7 +172,7 @@ export default function AdminBookManager({
   );
   const [books, setBooks] = useState<Book[]>([]);
   const [managerSection, setManagerSection] = useState<
-    "books" | "models" | "sections"
+    "books" | "models" | "sections" | "info"
   >("books");
   const [archiveSections, setArchiveSections] = useState<ArchiveSection[]>(
     DEFAULT_ARCHIVE_SECTIONS
@@ -744,7 +745,7 @@ export default function AdminBookManager({
         </div>
       </header>
 
-      <nav className="sticky top-[72px] z-10 flex justify-center gap-2 border-b border-black/15 bg-white px-4 py-2 sm:top-[88px]">
+      <nav className="sticky top-[72px] z-10 flex flex-wrap justify-center gap-2 border-b border-black/15 bg-white px-4 py-2 sm:top-[88px]">
         <button
           type="button"
           onClick={() => setManagerSection("books")}
@@ -772,6 +773,15 @@ export default function AdminBookManager({
         >
           ARCHIVE SECTIONS
         </button>
+        <button
+          type="button"
+          onClick={() => setManagerSection("info")}
+          className={`${buttonClass} ${
+            managerSection === "info" ? "bg-black text-white" : ""
+          }`}
+        >
+          INFO
+        </button>
       </nav>
 
       {managerSection === "models" ? (
@@ -782,6 +792,8 @@ export default function AdminBookManager({
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminArchiveSectionManager onSectionsChanged={setArchiveSections} />
         </main>
+      ) : managerSection === "info" ? (
+        <AdminAnalyticsInfo />
       ) : (
       <main className="mx-auto grid w-full max-w-[1500px] gap-0 md:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-black/20 p-5 md:min-h-[calc(100vh-65px)] md:border-b-0 md:border-r md:p-6">
