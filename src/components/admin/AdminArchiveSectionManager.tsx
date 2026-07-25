@@ -12,9 +12,9 @@ interface AdminArchiveSectionManagerProps {
 }
 
 const inputClass =
-  "w-full border border-black/25 bg-white px-3 py-2 text-[13px] outline-none focus:border-black";
+  "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[13px] outline-none focus:border-black";
 const buttonClass =
-  "border border-black/35 bg-white px-3 py-2 text-[12px] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[12px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
@@ -151,7 +151,7 @@ export default function AdminArchiveSectionManager({
 
   return (
     <div className="grid min-h-0 flex-1 md:grid-cols-[260px_minmax(0,1fr)]">
-      <aside className="border-b border-black/15 p-5 md:border-b-0 md:border-r">
+      <aside className="p-5">
         <form onSubmit={handleCreate} className="mb-8 flex flex-col gap-3">
           <h2 className="text-[17px]">CREATE SECTION</h2>
           <label className="text-[11px]">
@@ -180,7 +180,7 @@ export default function AdminArchiveSectionManager({
           </button>
         </form>
 
-        <div className="border-t border-black/15">
+        <div>
           {loading ? (
             <p className="py-4 text-[13px] text-black/50">...</p>
           ) : (
@@ -189,7 +189,7 @@ export default function AdminArchiveSectionManager({
                 key={section.id}
                 type="button"
                 onClick={() => setSelectedId(section.id)}
-                className={`block w-full border-b border-black/15 px-2 py-3 text-left ${
+                className={`block w-full border-0 px-2 py-3 text-left transition-colors ${
                   section.id === selectedId
                     ? "bg-black text-white"
                     : "hover:bg-black/5"

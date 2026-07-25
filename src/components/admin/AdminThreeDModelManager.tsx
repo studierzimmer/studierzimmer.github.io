@@ -29,9 +29,9 @@ interface AdminThreeDModelManagerProps {
 }
 
 const inputClass =
-  "w-full border border-black/25 bg-white px-3 py-2 text-[13px] outline-none focus:border-black";
+  "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[13px] outline-none focus:border-black";
 const buttonClass =
-  "border border-black/35 bg-white px-3 py-2 text-[12px] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[12px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 const modelFileAccept =
   ".glb,.stl,.step,.stp,model/gltf-binary,model/stl,application/sla,application/step,model/step";
 const hdriFileAccept = ".hdr,.exr,image/vnd.radiance,image/x-exr";
@@ -259,7 +259,7 @@ export default function AdminThreeDModelManager({
 
   return (
     <div className="grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
-      <aside className="overflow-y-auto border-b border-black/15 p-4 md:border-b-0 md:border-r">
+      <aside className="overflow-y-auto p-4">
         <form onSubmit={handleCreate} className="mb-7 flex flex-col gap-3">
           <h2 className="text-[16px]">ADD 3D MODEL</h2>
           <input
@@ -279,7 +279,7 @@ export default function AdminThreeDModelManager({
             UPLOAD GLB / STL / STEP
           </button>
           {processing && (
-            <div className="border border-black/20 p-3" role="status">
+            <div className="bg-black/[0.035] p-3" role="status">
               <div className="mb-2 flex items-center justify-between gap-3 text-[10px]">
                 <span>{processing.label}</span>
                 <span className="tabular-nums">{processing.percent}%</span>
@@ -313,13 +313,13 @@ export default function AdminThreeDModelManager({
             No Supabase models yet. The local watch remains the public fallback.
           </p>
         ) : (
-          <div className="border-t border-black/15">
+          <div>
             {models.map((model) => (
               <button
                 key={model.id}
                 type="button"
                 onClick={() => setSelectedId(model.id)}
-                className={`block w-full border-b border-black/15 px-2 py-3 text-left ${
+                className={`block w-full border-0 px-2 py-3 text-left transition-colors ${
                   model.id === selectedId ? "bg-black text-white" : "hover:bg-black/5"
                 }`}
               >
@@ -359,7 +359,7 @@ export default function AdminThreeDModelManager({
                 {selectedModel.storage_path}
               </p>
               {selectedModel.source_format === "step" && (
-                <div className="mt-3 border border-black/15 p-3 text-[11px] leading-relaxed">
+                <div className="mt-3 bg-black/[0.035] p-3 text-[11px] leading-relaxed">
                   <p>STEP SOURCE · {selectedModel.source_file_name}</p>
                   <p className="mt-1 text-black/50">
                     The private STEP is stored separately. Public visitors receive
@@ -448,7 +448,7 @@ export default function AdminThreeDModelManager({
               </label>
             )}
 
-            <div className="border border-dashed border-black/25 p-3">
+            <div className="bg-black/[0.035] p-3">
               <label className="block text-[11px]">
                 REPLACE GLB / STL / STEP
                 <input
@@ -462,7 +462,7 @@ export default function AdminThreeDModelManager({
               </label>
             </div>
 
-            <div className="border border-black/20 p-3">
+            <div className="bg-black/[0.035] p-3">
               <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-[11px]">PBR HDRI ENVIRONMENT</p>

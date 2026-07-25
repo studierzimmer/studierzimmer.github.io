@@ -395,7 +395,59 @@ type ListSnapshot = {
 };
 
 const ABOUT_TEXT =
-  "Gabriel Dell'Aiuto. b. 1996. TEXT 2";
+  "Gabriel Dell'Aiuto. b. 1996. Studier Zimmer is a space for G and friends.";
+
+const SPOTIFY_PLAYER_ID = "global-spotify-player";
+
+function setSpotifyPlayerOpen(open: boolean, preload = false) {
+  let host = document.getElementById(SPOTIFY_PLAYER_ID);
+
+  if (!host && !open && !preload) return;
+
+  if (!host) {
+    host = document.createElement("div");
+    host.id = SPOTIFY_PLAYER_ID;
+    Object.assign(host.style, {
+      position: "fixed",
+      bottom: "194px",
+      left: "50%",
+      width: "min(92vw, 430px)",
+      zIndex: "210",
+      overflow: "hidden",
+      borderRadius: "12px",
+      background: "#e6e6e6",
+      boxShadow: "0 20px 60px rgb(0 0 0 / 0.22)",
+      transformOrigin: "bottom",
+      transition:
+        "opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), transform 500ms cubic-bezier(0.22, 1, 0.36, 1)",
+    });
+
+    const iframe = document.createElement("iframe");
+    iframe.title = "Spotify playlist";
+    iframe.src =
+      "https://open.spotify.com/embed/playlist/5Z63kqzOn4CzWqazejJZEv?utm_source=generator&si=a41c800f68534cb7";
+    iframe.allow =
+      "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
+    iframe.allowFullscreen = true;
+    iframe.loading = "lazy";
+    iframe.frameBorder = "0";
+    Object.assign(iframe.style, {
+      display: "block",
+      width: "100%",
+      height: "min(352px, calc(100dvh - 218px))",
+      minHeight: "96px",
+      border: "0",
+    });
+    host.appendChild(iframe);
+    document.body.appendChild(host);
+  }
+
+  host.style.pointerEvents = open ? "auto" : "none";
+  host.style.opacity = open ? "1" : "0";
+  host.style.transform = open
+    ? "translateX(-50%) translateY(0) scale(1)"
+    : "translateX(-50%) translateY(16px) scale(0.75)";
+}
 
 const Index = () => {
   const navigate = useNavigate();
@@ -580,6 +632,7 @@ const Index = () => {
   const [searchOpen, setSearchOpen] = useState(initialSearchOpen);
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [exploreMode, setExploreMode] = useState<boolean>(initialExploreMode);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
   const initiallyArchiveOpen =
     initialStage === "list" || Boolean(initialActiveButton) || initialSearchOpen;
   const [archiveControlsMounted, setArchiveControlsMounted] = useState(
@@ -727,6 +780,20 @@ const Index = () => {
     const host = document.getElementById("global-sky-ocean-bg");
     if (host) host.setAttribute("data-explore", exploreMode ? "1" : "0");
   }, [exploreMode]);
+
+  useEffect(() => {
+    if (!exploreMode) {
+      setSpotifyOpen(false);
+      setSpotifyPlayerOpen(false);
+    }
+  }, [exploreMode]);
+
+  useEffect(() => {
+    setSpotifyPlayerOpen(false, true);
+    return () => {
+      setSpotifyPlayerOpen(false);
+    };
+  }, []);
 
   useEffect(() => {
     const audioActive = hasCheckedSplash && !showSplash && !revealClosing;
@@ -1494,7 +1561,9 @@ const Index = () => {
                 className={`index-intro-copy intro-elastic-item ${introItemMotionClass} text-[16px] md:text-[16px] text-left px-10 mb-4 cursor-pointer leading-wide tracking-wide break-keep`}
                 onClick={handleBackToIntro}
               >
-                TEXT 1
+                Studierzimmer-Ozean
+                <br />
+                studierzimmer.ch
                 <br />
               </p>
 
@@ -1504,7 +1573,7 @@ const Index = () => {
                   disabled={!introItemsEntered || introLeaving}
                   className={`index-intro-control intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                 >
-                  <span className="animate-bounce">BACK</span>
+                  <span className="animate-bounce">back</span>
                 </button>
 
                 {returnBookSession && (
@@ -1514,7 +1583,7 @@ const Index = () => {
                     disabled={!introItemsEntered || revealClosing}
                     className={`index-intro-control intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                   >
-                    START
+                    start
                   </button>
                 )}
               </div>
@@ -1535,7 +1604,7 @@ const Index = () => {
                         exploreMode ? "pointer-events-none opacity-0" : "opacity-100"
                       }`}
                     >
-                      BACK
+                      back
                     </button>
                   </div>
                 </motion.div>
@@ -1550,7 +1619,7 @@ const Index = () => {
                         archiveControlsMounted ? "animate-bounce" : ""
                       } ${exploreMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
                     >
-                      ARCHIVE
+                      archive
                     </button>
                   </div>
                 </motion.div>
@@ -1565,7 +1634,7 @@ const Index = () => {
                         aboutOpen ? "animate-bounce" : ""
                       } ${exploreMode ? "pointer-events-none opacity-0" : "opacity-100"}`}
                     >
-                      BIO
+                      about
                     </button>
                   </div>
                 </motion.div>
@@ -1605,7 +1674,7 @@ const Index = () => {
                         exploreMode ? "max-w-0 opacity-0" : "max-w-[100px] opacity-100"
                       }`}
                     >
-                      PLAY
+                      play
                     </span>
                     </button>
                   </div>
@@ -1633,7 +1702,7 @@ const Index = () => {
                         }
                         className="inline-flex max-w-full items-baseline gap-2 transition-transform hover:scale-105 active:scale-105"
                       >
-                        <span className="shrink-0 text-black">COVER</span> <br /> <br />
+                        <span className="shrink-0 text-black">cover</span> <br /> <br /><br />
                         <span className="truncate">{featuredBook.title}</span>
                       </button>
                     ) : booksLoading ? (
@@ -1658,7 +1727,7 @@ const Index = () => {
                     >
                       <button
                         onClick={handleSearchClick}
-                        className={`index-archive-category-button z-10 flex items-center text-[16px] font-normal uppercase select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
+                        className={`index-archive-category-button z-10 flex items-center text-[16px] font-normal select-none transition-all hover:scale-110 active:scale-110 md:text-[16px] ${
                           activeButton === "search" ? "animate-bounce" : "bg-alpha"
                         }`}
                       >
@@ -1699,7 +1768,7 @@ const Index = () => {
                     >
                       <input
                         type="text"
-                        placeholder="Search..."
+                        placeholder="search..."
                         value={searchQuery}
                         onChange={(event) => {
                           setSearchQuery(event.target.value);
@@ -1819,9 +1888,9 @@ const Index = () => {
                 onPointerUp={stopVerticalMovement}
                 onPointerCancel={stopVerticalMovement}
                 onLostPointerCapture={() => sendVertical(0)}
-                className="fixed bottom-[48px] flex h-11 w-11 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border border-white/25 bg-transparent text-[12px] font-normal text-white/65 backdrop-blur-sm"
+                className="fixed bottom-[42px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
                 style={{
-                  left: "calc(50% - 82px)",
+                  left: "calc(50% - 92px)",
                   zIndex: 20,
                 }}
               >
@@ -1863,13 +1932,45 @@ const Index = () => {
                 onPointerUp={stopVerticalMovement}
                 onPointerCancel={stopVerticalMovement}
                 onLostPointerCapture={() => sendVertical(0)}
-                className="fixed bottom-[48px] flex h-11 w-11 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border border-white/25 bg-transparent text-[12px] font-normal text-white/65 backdrop-blur-sm"
+                className="fixed bottom-[42px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
                 style={{
-                  left: "calc(50% + 82px)",
+                  left: "calc(50% + 92px)",
                   zIndex: 20,
                 }}
               >
                 E ↑
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label={spotifyOpen ? "Close music" : "Open music"}
+                aria-expanded={spotifyOpen}
+                onClick={() => {
+                  setSpotifyOpen((open) => {
+                    setSpotifyPlayerOpen(!open);
+                    return !open;
+                  });
+                }}
+                className={`fixed bottom-[107px] left-[calc(50%+61px)] flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border-0 bg-white/5 text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95 ${
+                  spotifyOpen ? "scale-110" : ""
+                }`}
+                style={{ zIndex: 22 }}
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  className="h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M9 18V5l10-2v13" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="16" cy="16" r="3" />
+                </svg>
               </button>
             </>
           )}

@@ -6,12 +6,18 @@ import AdminLogin from "@/components/admin/AdminLogin";
 
 interface AdminPortalProps {
   onBack: () => void;
+  onNavigate?: () => void;
+  onLibrary?: () => void;
+  onModels?: () => void;
   embedded?: boolean;
   surfaceReady?: boolean;
 }
 
 export default function AdminPortal({
   onBack,
+  onNavigate = onBack,
+  onLibrary = onBack,
+  onModels = onBack,
   embedded = false,
   surfaceReady = false,
 }: AdminPortalProps) {
@@ -81,6 +87,9 @@ export default function AdminPortal({
     <AdminBookManager
       userEmail={user.email ?? "admin"}
       onBack={onBack}
+      onNavigate={onNavigate}
+      onLibrary={onLibrary}
+      onModels={onModels}
       embedded={embedded}
       accountControlsReady={!embedded || surfaceReady}
       onSignOut={async () => {

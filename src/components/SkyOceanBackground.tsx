@@ -7,7 +7,7 @@ import React, {
   useRef,
 } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
-import { Cloud, Clouds, Sky, useGLTF } from "@react-three/drei";
+import { Sky, useGLTF } from "@react-three/drei";
 import { SkeletonUtils, Water } from "three-stdlib";
 
 const keys: Record<string, boolean> = {};
@@ -29,12 +29,13 @@ const JUMP_GRAVITY = 95;
 const SEA_LEVEL_Y = 0;
 // Edit this value to move the underwater floor up or down.
 const SEA_FLOOR_Y = -174;
-const PLAYER_MAX_Y = 320;
+const PLAYER_MAX_Y = 960;
 const OCEAN_SIZE = 120000;
 const SKY_DISTANCE = 48000;
 const CAMERA_FAR = 90000;
 const RIPPLE_TEXTURE_SIZE = 128;
 const RIPPLE_WORLD_SIZE = 900;
+const MAX_SURFACE_PULSES = 10;
 const COLLISION_CELL_SIZE = 12;
 const COLLISION_SURFACE_RADIUS = 4.5;
 const MAX_COLLISION_SAMPLES = 16000;
@@ -43,7 +44,117 @@ const FIXED_WATER_SUN_DIRECTION = new THREE.Vector3(500, 150, -1000).normalize()
 const FIXED_SUN_COLOR = "#fff4d6";
 const FIXED_BACKGROUND_COLOR = "#0b1e3a";
 const FIXED_WATER_COLOR = "#0a2a6a";
+const PLAYER_SESSION_KEY = "gstudios:ocean-player-transform";
 const causticsTimeUniform = { value: 0 };
+
+type SurfacePulseKind = "click" | "dive" | "rise";
+
+type SurfacePulse = {
+  id: number;
+  x: number;
+  z: number;
+  startedAt: number;
+  duration: number;
+  radius: number;
+  strength: number;
+  kind: SurfacePulseKind;
+};
+
+const surfacePulses: SurfacePulse[] = [];
+let nextSurfacePulseId = 1;
+
+function currentPulseTime() {
+  return performance.now() / 1000;
+}
+
+function addSurfacePulse(
+  x: number,
+  z: number,
+  options: {
+    duration: number;
+    radius: number;
+    strength: number;
+    kind: SurfacePulseKind;
+  }
+) {
+  const now = currentPulseTime();
+  surfacePulses.push({
+    id: nextSurfacePulseId,
+    x,
+    z,
+    startedAt: now,
+    ...options,
+  });
+  nextSurfacePulseId += 1;
+
+  while (surfacePulses.length > MAX_SURFACE_PULSES) {
+    surfacePulses.shift();
+  }
+  for (let index = surfacePulses.length - 1; index >= 0; index -= 1) {
+    const pulse = surfacePulses[index];
+    if (now - pulse.startedAt > pulse.duration + 0.25) {
+      surfacePulses.splice(index, 1);
+    }
+  }
+}
+
+function readPlayerSessionTransform() {
+  const fallback = {
+    position: [0, PLAYER_GROUND_Y, 0] as [number, number, number],
+    rotationY: Math.PI,
+  };
+
+  try {
+    const stored = window.sessionStorage.getItem(PLAYER_SESSION_KEY);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored) as {
+      position?: unknown;
+      rotationY?: unknown;
+    };
+    if (
+      !Array.isArray(parsed.position) ||
+      parsed.position.length !== 3 ||
+      !parsed.position.every(
+        (value) => typeof value === "number" && Number.isFinite(value)
+      ) ||
+      typeof parsed.rotationY !== "number" ||
+      !Number.isFinite(parsed.rotationY)
+    ) {
+      return fallback;
+    }
+
+    return {
+      position: [
+        Number(parsed.position[0]),
+        THREE.MathUtils.clamp(
+          Number(parsed.position[1]),
+          SEA_FLOOR_Y + 8,
+          PLAYER_MAX_Y
+        ),
+        Number(parsed.position[2]),
+      ] as [number, number, number],
+      rotationY: Number(parsed.rotationY),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function writePlayerSessionTransform(player: THREE.Object3D | null) {
+  if (!player) return;
+
+  try {
+    window.sessionStorage.setItem(
+      PLAYER_SESSION_KEY,
+      JSON.stringify({
+        position: player.position.toArray(),
+        rotationY: player.rotation.y,
+      })
+    );
+  } catch {
+    // Storage can be unavailable in strict private-browser modes.
+  }
+}
 
 function useCausticsTexture() {
   const texture = useLoader(
@@ -64,10 +175,20 @@ function useCausticsTexture() {
 
 function addUnderwaterCaustics(
   material: THREE.MeshStandardMaterial,
-  causticsMap: THREE.Texture
+  causticsMap: THREE.Texture,
+  options: {
+    includeRipple?: boolean;
+    baseLight?: number;
+    causticsStrength?: number;
+    lightTint?: [number, number, number];
+  } = {}
 ) {
   if (material.userData.hasUnderwaterCaustics) return;
 
+  const includeRipple = options.includeRipple ?? true;
+  const baseLight = options.baseLight ?? 0.045;
+  const causticsStrength = options.causticsStrength ?? 0.86;
+  const lightTint = options.lightTint ?? [0.46, 0.82, 1];
   const previousCompile = material.onBeforeCompile.bind(material);
   const previousCacheKey = material.customProgramCacheKey.bind(material);
 
@@ -120,7 +241,9 @@ function addUnderwaterCaustics(
         clamp(causticsA * 0.76 + causticsB * 0.4 - 0.035, 0.0, 1.0),
         1.18
       );
-      vec2 causticsRippleUv =
+      ${
+        includeRipple
+          ? `vec2 causticsRippleUv =
         (vCausticsWorldPosition.xz - causticsRippleCenter) /
           causticsRippleWorldSize + 0.5;
       vec2 causticsRippleEdge =
@@ -138,15 +261,21 @@ function addUnderwaterCaustics(
         texture2D(causticsRippleSampler, causticsRippleUv -
           vec2(0.0, causticsRippleTexel.y)).r;
       float rippleCaustics = smoothstep(0.012, 0.12,
-        length(vec2(causticsRippleX, causticsRippleY))) * causticsRippleMask;
+        length(vec2(causticsRippleX, causticsRippleY))) * causticsRippleMask;`
+          : "float rippleCaustics = 0.0;"
+      }
       movingCaustics = clamp(movingCaustics + rippleCaustics * 0.75, 0.0, 1.0);
-      vec3 underwaterFill = diffuseColor.rgb * vec3(0.72, 0.9, 1.0);
+      vec3 underwaterFill = diffuseColor.rgb * vec3(
+        ${lightTint[0].toFixed(4)},
+        ${lightTint[1].toFixed(4)},
+        ${lightTint[2].toFixed(4)}
+      );
       reflectedLight.indirectDiffuse += underwaterFill * submerged *
-        (0.14 + movingCaustics * 0.72);`
+        (${baseLight.toFixed(4)} + movingCaustics * ${causticsStrength.toFixed(4)});`
     );
   };
   material.customProgramCacheKey = () =>
-    `${previousCacheKey()}-underwater-caustics-v2`;
+    `${previousCacheKey()}-underwater-caustics-v4-${includeRipple ? "ripple" : "fine"}-${baseLight}-${causticsStrength}`;
   material.userData.hasUnderwaterCaustics = true;
   material.needsUpdate = true;
 }
@@ -499,6 +628,25 @@ function Ocean() {
           1 / RIPPLE_TEXTURE_SIZE
         ),
       };
+      material.uniforms.surfacePulseTime = { value: currentPulseTime() };
+      material.uniforms.surfacePulseCenters = {
+        value: Array.from(
+          { length: MAX_SURFACE_PULSES },
+          () => new THREE.Vector2()
+        ),
+      };
+      material.uniforms.surfacePulseStarts = {
+        value: new Float32Array(MAX_SURFACE_PULSES).fill(-1000),
+      };
+      material.uniforms.surfacePulseDurations = {
+        value: new Float32Array(MAX_SURFACE_PULSES).fill(1),
+      };
+      material.uniforms.surfacePulseRadii = {
+        value: new Float32Array(MAX_SURFACE_PULSES),
+      };
+      material.uniforms.surfacePulseStrengths = {
+        value: new Float32Array(MAX_SURFACE_PULSES),
+      };
       material.fragmentShader = material.fragmentShader
         .replace(
           "uniform vec3 waterColor;",
@@ -507,6 +655,12 @@ function Ocean() {
           uniform vec2 rippleCenter;
           uniform float rippleWorldSize;
           uniform vec2 rippleTexel;
+          uniform float surfacePulseTime;
+          uniform vec2 surfacePulseCenters[${MAX_SURFACE_PULSES}];
+          uniform float surfacePulseStarts[${MAX_SURFACE_PULSES}];
+          uniform float surfacePulseDurations[${MAX_SURFACE_PULSES}];
+          uniform float surfacePulseRadii[${MAX_SURFACE_PULSES}];
+          uniform float surfacePulseStrengths[${MAX_SURFACE_PULSES}];
 
           float rippleHeight(vec2 uv) {
             return texture2D(rippleSampler, uv).r * 2.0 - 1.0;
@@ -524,7 +678,35 @@ function Ocean() {
           float rippleDown = rippleHeight(rippleUv - vec2(0.0, rippleTexel.y));
           float rippleUp = rippleHeight(rippleUv + vec2(0.0, rippleTexel.y));
           vec2 rippleSlope = vec2(rippleLeft - rippleRight, rippleDown - rippleUp);
-          surfaceNormal = normalize(surfaceNormal + vec3(rippleSlope.x, 0.0, rippleSlope.y) * rippleMask * 2.6);`
+          surfaceNormal = normalize(surfaceNormal + vec3(rippleSlope.x, 0.0, rippleSlope.y) * rippleMask * 2.6);
+
+          vec2 independentPulseSlope = vec2(0.0);
+          for (int pulseIndex = 0; pulseIndex < ${MAX_SURFACE_PULSES}; pulseIndex++) {
+            float pulseAge = surfacePulseTime - surfacePulseStarts[pulseIndex];
+            float pulseDuration = max(surfacePulseDurations[pulseIndex], 0.001);
+            float pulseProgress = clamp(pulseAge / pulseDuration, 0.0, 1.0);
+            float pulseActive =
+              step(0.0, pulseAge) * (1.0 - step(pulseDuration, pulseAge));
+            vec2 fromPulse = worldPosition.xz - surfacePulseCenters[pulseIndex];
+            float pulseDistance = max(length(fromPulse), 0.001);
+            float pulseRadius = surfacePulseRadii[pulseIndex] *
+              (0.08 + pulseProgress * 0.92);
+            float pulseWidth = mix(
+              max(3.2, surfacePulseRadii[pulseIndex] * 0.11),
+              max(5.5, surfacePulseRadii[pulseIndex] * 0.19),
+              pulseProgress
+            );
+            float pulseBand = exp(
+              -pow((pulseDistance - pulseRadius) / pulseWidth, 2.0)
+            );
+            float pulseFade = pow(1.0 - pulseProgress, 1.55);
+            independentPulseSlope += normalize(fromPulse) * pulseBand *
+              pulseFade * surfacePulseStrengths[pulseIndex] * pulseActive;
+          }
+          surfaceNormal = normalize(
+            surfaceNormal +
+            vec3(independentPulseSlope.x, 0.0, independentPulseSlope.y) * 0.72
+          );`
         );
       material.needsUpdate = true;
       ocean.renderOrder = 2;
@@ -548,6 +730,34 @@ function Ocean() {
       const material = ref.current.material as THREE.ShaderMaterial;
       material.uniforms.time.value += delta;
       material.uniforms.rippleCenter.value.copy(rippleField.center);
+      const now = currentPulseTime();
+      material.uniforms.surfacePulseTime.value = now;
+      const centers = material.uniforms.surfacePulseCenters
+        .value as THREE.Vector2[];
+      const starts = material.uniforms.surfacePulseStarts
+        .value as Float32Array;
+      const durations = material.uniforms.surfacePulseDurations
+        .value as Float32Array;
+      const radii = material.uniforms.surfacePulseRadii
+        .value as Float32Array;
+      const strengths = material.uniforms.surfacePulseStrengths
+        .value as Float32Array;
+
+      for (let index = 0; index < MAX_SURFACE_PULSES; index += 1) {
+        const pulse = surfacePulses[index];
+        if (!pulse) {
+          starts[index] = -1000;
+          durations[index] = 1;
+          radii[index] = 0;
+          strengths[index] = 0;
+          continue;
+        }
+        centers[index].set(pulse.x, pulse.z);
+        starts[index] = pulse.startedAt;
+        durations[index] = pulse.duration;
+        radii[index] = pulse.radius;
+        strengths[index] = pulse.strength;
+      }
     }
   });
 
@@ -583,6 +793,163 @@ function SeaFloor() {
       <planeGeometry args={[OCEAN_SIZE, OCEAN_SIZE]} />
       <primitive object={material} attach="material" />
     </mesh>
+  );
+}
+
+function RisingBubbleFields() {
+  const visibility = useRef(0);
+  const bubbles = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, ventIndex) => {
+        const count = ventIndex % 2 === 0 ? 2 : 3;
+        const angle = ventIndex * 2.399963229728653;
+        const radius = 95 + (ventIndex % 7) * 135;
+        const ventX = Math.cos(angle) * radius;
+        const ventZ = Math.sin(angle) * radius - 260;
+
+        return Array.from({ length: count }, (_, memberIndex) => ({
+          baseX:
+            ventX +
+            Math.cos(angle + memberIndex * 1.7) * (2.4 + memberIndex * 1.8),
+          baseZ:
+            ventZ +
+            Math.sin(angle + memberIndex * 1.7) * (2.4 + memberIndex * 1.8),
+          phase:
+            (ventIndex / 14 + memberIndex * 0.027 + (ventIndex % 3) * 0.013) %
+            1,
+          duration: 17 + (ventIndex % 5) * 2.2 + memberIndex * 1.4,
+          size: 5.2 + (ventIndex % 4) * 0.9 + memberIndex * 0.65,
+          drift: 2.4 + (ventIndex % 3) * 1.1,
+          driftPhase: angle + memberIndex * 2.1,
+        }));
+      }).flat(),
+    []
+  );
+  const geometry = useMemo(() => {
+    const bubbleGeometry = new THREE.BufferGeometry();
+    bubbleGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(bubbles.length * 3), 3)
+    );
+    bubbleGeometry.setAttribute(
+      "aSize",
+      new THREE.BufferAttribute(new Float32Array(bubbles.length), 1)
+    );
+    bubbleGeometry.setAttribute(
+      "aAlpha",
+      new THREE.BufferAttribute(new Float32Array(bubbles.length), 1)
+    );
+    return bubbleGeometry;
+  }, [bubbles.length]);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+        uniforms: {
+          visibility: { value: 0 },
+        },
+        vertexShader: `
+          attribute float aSize;
+          attribute float aAlpha;
+          varying float vAlpha;
+
+          void main() {
+            vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * viewPosition;
+            gl_PointSize = clamp(
+              aSize * (250.0 / max(1.0, -viewPosition.z)),
+              2.0,
+              34.0
+            );
+            vAlpha = aAlpha;
+          }
+        `,
+        fragmentShader: `
+          uniform float visibility;
+          varying float vAlpha;
+
+          void main() {
+            vec2 point = gl_PointCoord - 0.5;
+            float distanceToCenter = length(point);
+            float outer = 1.0 - smoothstep(0.42, 0.5, distanceToCenter);
+            float inner = 1.0 - smoothstep(0.29, 0.39, distanceToCenter);
+            float ring = max(0.0, outer - inner * 0.88);
+            float glint = 1.0 - smoothstep(
+              0.035,
+              0.12,
+              distance(point, vec2(-0.18, 0.18))
+            );
+            float alpha = (ring * 0.78 + glint * 0.42) * vAlpha * visibility;
+            if (alpha < 0.008) discard;
+            gl_FragColor = vec4(vec3(0.76, 0.94, 1.0), alpha);
+          }
+        `,
+      }),
+    []
+  );
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material]
+  );
+
+  useFrame(({ camera, clock }, delta) => {
+    visibility.current = THREE.MathUtils.damp(
+      visibility.current,
+      camera.position.y < SEA_LEVEL_Y - 0.45 ? 1 : 0,
+      5.2,
+      delta
+    );
+    material.uniforms.visibility.value = visibility.current;
+
+    const positions = geometry.getAttribute(
+      "position"
+    ) as THREE.BufferAttribute;
+    const sizes = geometry.getAttribute("aSize") as THREE.BufferAttribute;
+    const alphas = geometry.getAttribute("aAlpha") as THREE.BufferAttribute;
+    const elapsed = clock.elapsedTime;
+    const travelHeight = SEA_LEVEL_Y - SEA_FLOOR_Y - 7;
+
+    bubbles.forEach((bubble, index) => {
+      const progress = (elapsed / bubble.duration + bubble.phase) % 1;
+      const sway =
+        Math.sin(elapsed * 0.72 + bubble.driftPhase + progress * Math.PI * 3) *
+        bubble.drift;
+      const crossSway =
+        Math.cos(elapsed * 0.51 + bubble.driftPhase * 1.4) *
+        bubble.drift *
+        0.55;
+      const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.08);
+      const fadeOut =
+        1 - THREE.MathUtils.smoothstep(progress, 0.8, 0.985);
+
+      positions.setXYZ(
+        index,
+        bubble.baseX + sway,
+        SEA_FLOOR_Y + 4 + progress * travelHeight,
+        bubble.baseZ + crossSway
+      );
+      sizes.setX(index, bubble.size * (0.82 + progress * 0.48));
+      alphas.setX(index, fadeIn * fadeOut * 0.86);
+    });
+
+    positions.needsUpdate = true;
+    sizes.needsUpdate = true;
+    alphas.needsUpdate = true;
+  });
+
+  return (
+    <points
+      geometry={geometry}
+      material={material}
+      frustumCulled={false}
+      renderOrder={5}
+    />
   );
 }
 
@@ -695,7 +1062,7 @@ function UnderwaterSurface() {
       renderOrder={3}
       frustumCulled={false}
     >
-      <planeGeometry args={[6000, 6000, 128, 128]} />
+      <planeGeometry args={[16000, 16000, 128, 128]} />
       <primitive object={material} attach="material" />
     </mesh>
   );
@@ -729,7 +1096,13 @@ function OceanInteractionController() {
       );
       raycaster.setFromCamera(pointer, camera);
       if (!raycaster.ray.intersectPlane(waterPlane, hit)) return;
-      rippleField.addRipple(hit.x, hit.z, -0.95, 24);
+      rippleField.addRipple(hit.x, hit.z, -1.05, 22);
+      addSurfacePulse(hit.x, hit.z, {
+        duration: 2.7,
+        radius: 82,
+        strength: 0.72,
+        kind: "click",
+      });
     };
 
     window.addEventListener("pointerdown", addDroplet, { passive: true });
@@ -737,184 +1110,6 @@ function OceanInteractionController() {
   }, [camera]);
 
   return null;
-}
-
-function MovingClouds() {
-  const group = useRef<THREE.Group>(null);
-  const warmLight = useRef<THREE.PointLight>(null);
-  const coolLight = useRef<THREE.PointLight>(null);
-  const warm = useMemo(() => new THREE.Color("#ffd992"), []);
-  const cool = useMemo(() => new THREE.Color("#8bc9ff"), []);
-  const mixed = useMemo(() => new THREE.Color(), []);
-
-  useEffect(() => {
-    group.current?.traverse((child) => {
-      child.castShadow = false;
-      child.receiveShadow = false;
-    });
-  }, []);
-
-  useFrame(({ camera, clock }, delta) => {
-    if (group.current) {
-      group.current.position.x = THREE.MathUtils.damp(
-        group.current.position.x,
-        camera.position.x + Math.sin(clock.elapsedTime * 0.025) * 70,
-        0.35,
-        delta
-      );
-      group.current.position.z = THREE.MathUtils.damp(
-        group.current.position.z,
-        camera.position.z + Math.cos(clock.elapsedTime * 0.02) * 55,
-        0.35,
-        delta
-      );
-    }
-
-    const phase = 0.5 + Math.sin(clock.elapsedTime * 0.42) * 0.5;
-    mixed.lerpColors(warm, cool, phase);
-    if (warmLight.current) {
-      warmLight.current.color.copy(mixed);
-      warmLight.current.intensity = 1.4 + Math.sin(clock.elapsedTime * 0.8) * 0.28;
-    }
-    if (coolLight.current) {
-      coolLight.current.color.copy(mixed).lerp(cool, 0.3);
-      coolLight.current.intensity = 1.05 + Math.cos(clock.elapsedTime * 0.65) * 0.22;
-    }
-  });
-
-  return (
-    <group ref={group}>
-      <Clouds
-        texture={`${import.meta.env.BASE_URL}cloud-white.png`}
-        material={THREE.MeshBasicMaterial}
-        limit={96}
-        frustumCulled={false}
-      >
-        <Cloud
-          seed={2}
-          segments={14}
-          bounds={[105, 18, 38]}
-          position={[-330, 230, -720]}
-          volume={108}
-          opacity={0.93}
-          growth={5}
-          speed={0.06}
-          fade={1500}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={7}
-          segments={13}
-          bounds={[94, 16, 34]}
-          position={[330, 210, -820]}
-          volume={98}
-          opacity={0.9}
-          growth={4.6}
-          speed={0.05}
-          fade={1500}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={11}
-          segments={10}
-          bounds={[78, 14, 29]}
-          position={[620, 260, -650]}
-          volume={86}
-          opacity={0.86}
-          growth={3.8}
-          speed={0.045}
-          fade={1500}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={17}
-          segments={9}
-          bounds={[72, 13, 27]}
-          position={[-650, 275, -600]}
-          volume={82}
-          opacity={0.84}
-          growth={3.5}
-          speed={0.04}
-          fade={1500}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={23}
-          segments={9}
-          bounds={[80, 14, 30]}
-          position={[50, 300, -1050]}
-          volume={90}
-          opacity={0.84}
-          growth={3.6}
-          speed={0.045}
-          fade={1600}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={29}
-          segments={8}
-          bounds={[76, 13, 28]}
-          position={[-420, 235, 620]}
-          volume={88}
-          opacity={0.86}
-          growth={3.5}
-          speed={0.042}
-          fade={1600}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={31}
-          segments={8}
-          bounds={[80, 14, 29]}
-          position={[440, 220, 720]}
-          volume={92}
-          opacity={0.86}
-          growth={3.6}
-          speed={0.044}
-          fade={1600}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={37}
-          segments={8}
-          bounds={[72, 12, 26]}
-          position={[820, 255, 100]}
-          volume={84}
-          opacity={0.84}
-          growth={3.3}
-          speed={0.04}
-          fade={1600}
-          color="#ffffff"
-        />
-        <Cloud
-          seed={41}
-          segments={8}
-          bounds={[74, 13, 27]}
-          position={[-850, 270, 60]}
-          volume={86}
-          opacity={0.84}
-          growth={3.4}
-          speed={0.041}
-          fade={1600}
-          color="#ffffff"
-        />
-      </Clouds>
-      <pointLight
-        ref={warmLight}
-        position={[-330, 228, -720]}
-        distance={310}
-        decay={2}
-        castShadow={false}
-      />
-      <pointLight
-        ref={coolLight}
-        position={[330, 208, -820]}
-        distance={290}
-        decay={2}
-        castShadow={false}
-      />
-    </group>
-  );
 }
 
 function UnderwaterController() {
@@ -925,9 +1120,9 @@ function UnderwaterController() {
     () => new THREE.Color(FIXED_BACKGROUND_COLOR),
     []
   );
-  const belowColor = useMemo(() => new THREE.Color("#06283f"), []);
+  const belowColor = useMemo(() => new THREE.Color("#04395a"), []);
   const mixedColor = useMemo(() => new THREE.Color(), []);
-  const fog = useMemo(() => new THREE.FogExp2("#0a3854", 0), []);
+  const fog = useMemo(() => new THREE.FogExp2("#0a5273", 0), []);
 
   useFrame((_, delta) => {
     const underwater = camera.position.y < SEA_LEVEL_Y - 0.45;
@@ -940,7 +1135,7 @@ function UnderwaterController() {
     const amount = underwaterAmount.current;
     mixedColor.lerpColors(aboveColor, belowColor, amount);
     scene.background = mixedColor;
-    fog.density = amount * 0.0042;
+    fog.density = amount * 0.0028;
     scene.fog = amount > 0.003 ? fog : null;
 
     if (wasUnderwater.current === null) {
@@ -972,7 +1167,7 @@ function UnderwaterFillLight() {
     if (!ref.current) return;
     ref.current.intensity = THREE.MathUtils.damp(
       ref.current.intensity,
-      camera.position.y < SEA_LEVEL_Y - 0.45 ? 0.62 : 0,
+      camera.position.y < SEA_LEVEL_Y - 0.45 ? 0.24 : 0,
       4.2,
       delta
     );
@@ -981,8 +1176,8 @@ function UnderwaterFillLight() {
   return (
     <hemisphereLight
       ref={ref}
-      color="#d9f7ff"
-      groundColor="#12364a"
+      color="#65c9f1"
+      groundColor="#041b2b"
       intensity={0}
     />
   );
@@ -1089,15 +1284,23 @@ function Player() {
   const { scene } = useGLTF(`${import.meta.env.BASE_URL}wolfy.glb`);
   const causticsMap = useCausticsTexture();
   const playerScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
+  const initialTransform = useMemo(() => readPlayerSessionTransform(), []);
+  const initiallyGrounded =
+    Math.abs(initialTransform.position[1] - PLAYER_GROUND_Y) < 0.1;
   const joystick = useRef(new THREE.Vector3());
   const verticalControl = useRef(0);
+  const touchMovementHold = useRef(0);
+  const sprintBlend = useRef(0);
+  const persistenceElapsed = useRef(0);
   const velocity = useRef(new THREE.Vector3());
   const verticalVelocity = useRef(0);
-  const grounded = useRef(true);
-  const freeVerticalMovement = useRef(false);
+  const jumpReturnY = useRef(initialTransform.position[1]);
+  const grounded = useRef(initiallyGrounded);
+  const freeVerticalMovement = useRef(!initiallyGrounded);
+  const jumping = useRef(false);
   const exploreEnabled = useRef(false);
   const facing = useRef(new THREE.Vector3(0, 0, 1));
-  const previousHeight = useRef(PLAYER_GROUND_Y);
+  const previousHeight = useRef(initialTransform.position[1]);
   const previousWaterSphereCenter = useRef<THREE.Vector3 | null>(null);
   const waterSphereCenter = useRef(new THREE.Vector3());
   const waterSphereOffset = useRef(new THREE.Vector3());
@@ -1135,7 +1338,12 @@ function Player() {
         child.material.roughness = 0.42;
         child.material.metalness = 0.05;
         child.material.envMapIntensity = 0.35;
-        addUnderwaterCaustics(child.material, causticsMap);
+        addUnderwaterCaustics(child.material, causticsMap, {
+          includeRipple: false,
+          baseLight: 0,
+          causticsStrength: 0.78,
+          lightTint: [1, 0.98, 0.9],
+        });
         child.castShadow = true;
         child.receiveShadow = true;
       }
@@ -1150,14 +1358,19 @@ function Player() {
       joystick.current.set(x, 0, z);
     };
     const jump = () => {
+      if (jumping.current) return;
       if (!grounded.current && !freeVerticalMovement.current) return;
+      jumping.current = true;
+      freeVerticalMovement.current = false;
       grounded.current = false;
+      jumpReturnY.current = group.current.position.y;
       verticalVelocity.current = JUMP_VELOCITY;
     };
     const moveVertically = (event: Event) => {
       const { y } = (event as CustomEvent<{ y: number }>).detail;
       verticalControl.current = THREE.MathUtils.clamp(y, -1, 1);
       if (Math.abs(verticalControl.current) > 0.01) {
+        jumping.current = false;
         freeVerticalMovement.current = true;
         grounded.current = false;
       }
@@ -1169,6 +1382,14 @@ function Player() {
       if (!exploreEnabled.current) {
         joystick.current.set(0, 0, 0);
         verticalControl.current = 0;
+        jumping.current = false;
+        const atGround =
+          Math.abs(group.current.position.y - PLAYER_GROUND_Y) < 0.1;
+        grounded.current = atGround;
+        freeVerticalMovement.current = !atGround;
+        touchMovementHold.current = 0;
+        sprintBlend.current = 0;
+        writePlayerSessionTransform(group.current);
       }
     };
 
@@ -1186,6 +1407,10 @@ function Player() {
       window.removeEventListener("explore-jump", jump);
       window.removeEventListener("explore-vertical", moveVertically);
       window.removeEventListener("explore-mode", setExploreMode);
+      writePlayerSessionTransform(group.current);
+      if (playerRef.current === group.current) {
+        playerRef.current = null;
+      }
     };
   }, []);
 
@@ -1204,6 +1429,21 @@ function Player() {
 
     if (input.lengthSq() < 0.01) input.set(0, 0, 0);
 
+    const touchMovementActive =
+      joystick.current.lengthSq() > 0.01 ||
+      Math.abs(verticalControl.current) > 0.01;
+    touchMovementHold.current = touchMovementActive
+      ? touchMovementHold.current + delta
+      : 0;
+    const sprintRequested =
+      Boolean(keys.shift) || touchMovementHold.current > 0.45;
+    sprintBlend.current = THREE.MathUtils.damp(
+      sprintBlend.current,
+      sprintRequested ? 1 : 0,
+      sprintRequested ? 5.5 : 3.8,
+      delta
+    );
+
     const cameraForward = new THREE.Vector3();
     camera.getWorldDirection(cameraForward);
     cameraForward.y = 0;
@@ -1216,7 +1456,8 @@ function Player() {
       .addScaledVector(cameraRight, input.x);
 
     if (move.lengthSq() > 0.0001) move.normalize();
-    velocity.current.lerp(move.multiplyScalar(100), delta * 6);
+    const movementSpeed = 100 * (1 + sprintBlend.current * 1.65);
+    velocity.current.lerp(move.multiplyScalar(movementSpeed), delta * 6);
 
     const nextPosition = group.current.position
       .clone()
@@ -1229,14 +1470,18 @@ function Player() {
       1
     );
     if (Math.abs(verticalInput) > 0.01) {
+      jumping.current = false;
       freeVerticalMovement.current = true;
       grounded.current = false;
     }
 
-    if (freeVerticalMovement.current) {
+    if (jumping.current) {
+      verticalVelocity.current -= JUMP_GRAVITY * Math.min(delta, 0.05);
+    } else if (freeVerticalMovement.current) {
+      const verticalSpeed = 58 * (1 + sprintBlend.current * 1.2);
       verticalVelocity.current = THREE.MathUtils.damp(
         verticalVelocity.current,
-        verticalInput * 58,
+        verticalInput * verticalSpeed,
         verticalInput === 0 ? 7.5 : 6,
         delta
       );
@@ -1245,10 +1490,16 @@ function Player() {
     }
     nextPosition.y += verticalVelocity.current * Math.min(delta, 0.05);
 
-    if (!freeVerticalMovement.current && nextPosition.y <= PLAYER_GROUND_Y) {
-      nextPosition.y = PLAYER_GROUND_Y;
+    const landingHeight = jumping.current
+      ? jumpReturnY.current
+      : PLAYER_GROUND_Y;
+    if (!freeVerticalMovement.current && nextPosition.y <= landingHeight) {
+      nextPosition.y = landingHeight;
       verticalVelocity.current = 0;
       grounded.current = true;
+      jumping.current = false;
+      freeVerticalMovement.current =
+        Math.abs(landingHeight - PLAYER_GROUND_Y) >= 0.1;
     }
     nextPosition.y = THREE.MathUtils.clamp(
       nextPosition.y,
@@ -1293,12 +1544,37 @@ function Player() {
         waterSphereCenter.current.y >= SEA_LEVEL_Y);
     if (crossedSurface) {
       const rising = waterSphereCenter.current.y > previousHeight.current;
+      const impactRadius = Math.max(34, waterProxy.radius * 2.8);
       rippleField.addRipple(
         waterSphereCenter.current.x,
         waterSphereCenter.current.z,
-        rising ? 0.38 : -1.25,
-        rising ? waterProxy.radius * 1.45 : Math.max(30, waterProxy.radius * 2.4)
+        rising ? 0.46 : -2.05,
+        rising ? waterProxy.radius * 1.6 : impactRadius
       );
+      addSurfacePulse(
+        waterSphereCenter.current.x,
+        waterSphereCenter.current.z,
+        {
+          duration: rising ? 2.2 : 3.5,
+          radius: rising ? impactRadius * 1.55 : impactRadius * 3.3,
+          strength: rising ? 0.58 : 1.55,
+          kind: rising ? "rise" : "dive",
+        }
+      );
+      window.dispatchEvent(
+        new CustomEvent("ocean-player-splash", {
+          detail: {
+            submerging: !rising,
+            speed: Math.abs(verticalVelocity.current),
+          },
+        })
+      );
+      if (!rising && !jumping.current) {
+        verticalVelocity.current = Math.min(
+          verticalVelocity.current,
+          -72
+        );
+      }
     }
     previousHeight.current = waterSphereCenter.current.y;
     previousWaterSphereCenter.current.copy(waterSphereCenter.current);
@@ -1312,6 +1588,11 @@ function Player() {
     }
 
     group.current.userData.joyX = joystick.current.x;
+    persistenceElapsed.current += delta;
+    if (persistenceElapsed.current >= 0.45) {
+      persistenceElapsed.current = 0;
+      writePlayerSessionTransform(group.current);
+    }
   });
 
   return (
@@ -1319,8 +1600,8 @@ function Player() {
       ref={group}
       object={playerScene}
       scale={PLAYER_SCALE}
-      position={[0, 15, 0]}
-      rotation={[0, Math.PI, 0]}
+      position={initialTransform.position}
+      rotation={[0, initialTransform.rotationY, 0]}
     />
   );
 }
@@ -1475,6 +1756,7 @@ function SurfaceCrossingSound() {
     const audio = new Audio(`${import.meta.env.BASE_URL}bubble.mp3`);
     audio.preload = "auto";
     audio.volume = 0.24;
+    let audioContext: AudioContext | null = null;
 
     const playCrossing = (event: Event) => {
       const underwater = (
@@ -1488,11 +1770,47 @@ function SurfaceCrossingSound() {
       });
     };
 
+    const playHeavyBlop = (event: Event) => {
+      const { submerging, speed } = (
+        event as CustomEvent<{
+          submerging: boolean;
+          speed: number;
+        }>
+      ).detail;
+      if (!submerging) return;
+
+      audioContext ??= new AudioContext();
+      if (audioContext.state === "suspended") {
+        void audioContext.resume();
+      }
+
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      const impact = THREE.MathUtils.clamp(speed / 70, 0.7, 1.35);
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(168 * impact, now);
+      oscillator.frequency.exponentialRampToValueAtTime(54, now + 0.38);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.16 * impact, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.44);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.46);
+    };
+
     window.addEventListener("ocean-surface-cross", playCrossing);
+    window.addEventListener("ocean-player-splash", playHeavyBlop);
     return () => {
       window.removeEventListener("ocean-surface-cross", playCrossing);
+      window.removeEventListener("ocean-player-splash", playHeavyBlop);
       audio.pause();
       audio.src = "";
+      if (audioContext) {
+        void audioContext.close();
+      }
     };
   }, []);
 
@@ -1542,9 +1860,9 @@ export default function SkyOceanBackground() {
 
         <Suspense fallback={null}>
           <SeaFloor />
+          <RisingBubbleFields />
           <Ocean />
           <UnderwaterSurface />
-          <MovingClouds />
           <Island />
           <Player />
         </Suspense>

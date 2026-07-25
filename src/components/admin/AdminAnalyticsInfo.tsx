@@ -322,9 +322,9 @@ export default function AdminAnalyticsInfo() {
       <aside {...panel(470)} className={`${panel(470).className} mt-6 border border-black/20 p-5 text-[12px] leading-relaxed text-black/55`}>
         <p>
           Retention target: 180 days. The deletion RPC must be scheduled or run
-          periodically. Public tracking is not enabled by this admin screen and
-          must remain blocked until the visitor has made the required analytics
-          privacy choice.
+          periodically. Public collection remains blocked by default and starts
+          only after the visitor selects ALLOW ANALYTICS in the privacy
+          settings. Withdrawing consent prevents future events immediately.
         </p>
         {lastUpdated && (
           <p className="mt-2 font-mono text-[10px]">

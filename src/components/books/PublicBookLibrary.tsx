@@ -9,11 +9,20 @@ import React, {
 } from "react";
 import { flushSync } from "react-dom";
 import type { Book, BookPage } from "@/types/books";
+import type { BookComment } from "@/types/bookComments";
 import {
   listBookPages,
   listPublishedBooks,
 } from "@/services/bookRepository";
+import {
+  createBookComment,
+  deleteBookComment,
+  listVisibleBookComments,
+} from "@/services/bookCommentRepository";
+import { trackAnalyticsEvent } from "@/services/analyticsTracker";
 import FoldingBookViewer from "@/components/books/FoldingBookViewer";
+import { useAdminSession } from "@/hooks/useAdminSession";
+import ScrambleText from "@/components/navigation/ScrambleText";
 import {
   BOOK_INDEX_RETURN_KEY,
   BOOK_INTRO_RETURN_KEY,
@@ -37,12 +46,6 @@ interface PublicBookLibraryProps {
   onBookChange?: (slug: string) => void;
 }
 
-interface ScrambleTextProps {
-  text: string;
-  speed?: number;
-  revealSpeed?: number;
-}
-
 type CenterMotion = "outside" | "entering" | "visible" | "leaving";
 
 const BOOK_MOTION_DURATION = 1120;
@@ -59,128 +62,6 @@ const BOOK_SWITCH_LEAVE_TOTAL_DURATION =
 const BOOK_BACKGROUND_MIX_DURATION = 1180;
 const BOOK_VIEWER_READY_TIMEOUT = 6000;
 
-const SCRAMBLE_CHARACTERS =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&@!?/\\[]{}<>+-=*";
-
-function ScrambleText({
-  text,
-  speed = 100,
-  revealSpeed = 55,
-}: ScrambleTextProps) {
-  const textRef = useRef<HTMLSpanElement | null>(null);
-  const intervalRef = useRef<number | null>(null);
-  const revealIndexRef = useRef(0);
-  const hoveringRef = useRef(false);
-
-  const clearAnimation = useCallback(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  const randomCharacter = useCallback(() => {
-    return SCRAMBLE_CHARACTERS[
-      Math.floor(Math.random() * SCRAMBLE_CHARACTERS.length)
-    ];
-  }, []);
-
-  const createScrambledText = useCallback(
-    (revealedCharacters = 0) =>
-      text
-        .split("")
-        .map((character, index) => {
-          if (character === " ") {
-            return " ";
-          }
-
-          if (index < revealedCharacters) {
-            return character;
-          }
-
-          return randomCharacter();
-        })
-        .join(""),
-    [randomCharacter, text]
-  );
-
-  const startScrambling = useCallback(() => {
-    clearAnimation();
-    hoveringRef.current = false;
-
-    if (!textRef.current) {
-      return;
-    }
-
-    intervalRef.current = window.setInterval(() => {
-      if (!textRef.current || hoveringRef.current) {
-        return;
-      }
-
-      textRef.current.textContent = createScrambledText();
-    }, speed);
-  }, [clearAnimation, createScrambledText, speed]);
-
-  const revealText = useCallback(() => {
-    clearAnimation();
-    hoveringRef.current = true;
-    revealIndexRef.current = 0;
-
-    if (!textRef.current) {
-      return;
-    }
-
-    intervalRef.current = window.setInterval(() => {
-      revealIndexRef.current += 1;
-
-      if (textRef.current) {
-        textRef.current.textContent = createScrambledText(
-          revealIndexRef.current
-        );
-      }
-
-      if (revealIndexRef.current >= text.length) {
-        clearAnimation();
-
-        if (textRef.current) {
-          textRef.current.textContent = text;
-        }
-      }
-    }, revealSpeed);
-  }, [clearAnimation, createScrambledText, revealSpeed, text]);
-
-  useEffect(() => {
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches;
-
-    if (reducedMotion) {
-      if (textRef.current) {
-        textRef.current.textContent = text;
-      }
-
-      return clearAnimation;
-    }
-
-    startScrambling();
-
-    return clearAnimation;
-  }, [clearAnimation, startScrambling, text]);
-
-  return (
-    <span
-      className="public-login-scramble"
-      onMouseEnter={revealText}
-      onMouseLeave={startScrambling}
-      aria-label={text}
-    >
-      <span ref={textRef} aria-hidden="true">
-        {text}
-      </span>
-    </span>
-  );
-}
-
 const libraryStyles = `
 .public-book-shell {
   height: 100vh;
@@ -190,32 +71,98 @@ const libraryStyles = `
 .public-book-nav {
   left: max(12px, env(safe-area-inset-left));
   top: max(12px, env(safe-area-inset-top));
-  gap: clamp(5px, 1.8vw, 8px);
-  max-width: calc(100vw - 24px);
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(34px, 5vw, 48px);
+  align-items: start;
+  gap: clamp(1px, 0.6vw, 7px);
+  max-width: calc(100vw - 24px - env(safe-area-inset-left));
 }
 
-.public-book-nav-icon {
-  width: clamp(42px, 12vw, 48px);
-  height: clamp(42px, 12vw, 48px);
+.public-book-control-column {
+  position: relative;
+  width: 100%;
+  height: clamp(96px, 16dvh, 138px);
+  border: 0;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  color: black;
+  overflow: visible;
 }
 
-.public-book-nav-text {
-  height: clamp(42px, 12vw, 48px);
-  padding-inline: clamp(12px, 3.8vw, 16px);
+.public-book-control-column > span {
+  position: absolute;
+  left: auto;
+  right: 50%;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transform: rotate(-90deg);
+  transform-origin: 100% 50%;
+  font-size: clamp(11px, 1.5vw, 13px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: rgb(0 0 0 / 0.42);
+  transition:
+    color 480ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 240ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.public-book-control-column:hover > span,
+.public-book-control-column:focus-visible > span {
+  color: rgb(0 0 0 / 0.72);
+  transform: rotate(-90deg) scale(1.08);
+}
+
+.public-book-control-column:focus-visible > span {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.public-book-control-column.is-active > span {
+  color: black;
+  text-decoration: none;
 }
 
 .public-book-main {
-  padding-top: calc(env(safe-area-inset-top) + 5.25rem);
-  padding-bottom: calc(env(safe-area-inset-bottom) + 1.6rem);
+  padding:
+    calc(env(safe-area-inset-top) + clamp(14px, 2.5dvh, 32px))
+    max(12px, env(safe-area-inset-right))
+    calc(env(safe-area-inset-bottom) + clamp(14px, 2.5dvh, 32px))
+    max(12px, env(safe-area-inset-left));
 }
 
 .public-book-viewport {
   box-sizing: border-box;
-  width: min(calc(100vw - clamp(48px, 8vw, 112px)), 1280px);
-  height: min(64dvh, 720px, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 11.5rem));
+  width: min(
+    calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - clamp(28px, 5vw, 82px)),
+    1800px
+  );
+  height: min(
+    calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - clamp(40px, 8dvh, 92px)),
+    1100px
+  );
   min-height: 0;
-  padding: clamp(16px, 2.6vw, 34px);
+  padding: clamp(8px, 1.6vw, 24px);
   contain: layout paint;
+}
+
+.public-book-viewport .stf__hardShadow,
+.public-book-viewport .stf__hardInnerShadow {
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(clamp(4px, 0.65vw, 8px));
+  transition: opacity 150ms cubic-bezier(0.22, 0.8, 0.28, 1);
+  will-change: opacity, filter;
+}
+
+.public-book-viewport.is-page-folding .stf__hardShadow,
+.public-book-viewport.is-page-folding .stf__hardInnerShadow {
+  opacity: 0.84;
 }
 
 .public-book-surface {
@@ -265,72 +212,42 @@ const libraryStyles = `
   pointer-events: none;
 }
 
-.public-book-title {
-  margin-top: clamp(8px, 2.2dvh, 1.75rem);
-}
-
-.public-book-description {
-  margin-top: clamp(8px, 2dvh, 1.25rem);
-}
-
 @media (max-width: 380px), (max-height: 700px) {
   .public-book-nav {
-    left: 50%;
     top: max(8px, env(safe-area-inset-top));
-    transform: translateX(-50%);
-    gap: clamp(4px, 1.4vw, 6px);
-    max-width: calc(100vw - 12px);
+    left: max(7px, env(safe-area-inset-left));
+    grid-auto-columns: 31px;
+    gap: 0;
+    max-width: calc(100vw - 14px);
   }
 
-  .public-book-nav-icon {
-    width: 40px;
-    height: 40px;
-  }
-
-  .public-book-nav-text {
-    height: 40px;
-    padding-inline: 11px;
-    font-size: 12px;
+  .public-book-control-column {
+    height: clamp(76px, 20dvh, 104px);
   }
 
   .public-book-main {
-    padding-top: calc(env(safe-area-inset-top) + 4.3rem);
-    padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+    padding:
+      calc(env(safe-area-inset-top) + 9px)
+      max(8px, env(safe-area-inset-right))
+      calc(env(safe-area-inset-bottom) + 9px)
+      max(8px, env(safe-area-inset-left));
   }
 
   .public-book-viewport {
-    width: min(calc(100vw - clamp(36px, 8vw, 64px)), 1280px);
-    height: min(58dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9.2rem));
+    width: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 20px);
+    height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 20px);
     min-height: 0;
-    padding: clamp(12px, 2.4vw, 20px);
-  }
-
-  .public-book-title,
-  .public-book-description {
-    font-size: 14px;
-  }
-
-  .public-book-label-wrap {
-    display: none;
-  }
-
-  .public-book-balloon {
-    top: calc(env(safe-area-inset-top) + 3.8rem);
-    max-height: calc(100dvh - env(safe-area-inset-top) - 4.5rem);
+    padding: 5px;
   }
 }
 
 @media (max-height: 520px) {
-  .public-book-description {
-    display: none;
-  }
-
-  .public-book-title {
-    margin-top: 5px;
-  }
-
   .public-book-viewport {
-    height: min(52dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8.4rem));
+    height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+  }
+
+  .public-book-control-column {
+    height: min(82px, calc(100dvh - 18px));
   }
 }
 
@@ -342,6 +259,255 @@ const libraryStyles = `
 .public-book-scroll::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+.public-library-drawer {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(72dvh, 720px);
+  transform: translate3d(0, 104%, 0);
+  opacity: 0;
+  background: rgb(207 207 207);
+  transition:
+    transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1),
+    opacity 360ms ease;
+  will-change: transform, opacity;
+}
+
+.public-library-drawer.is-open {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+}
+
+.public-library-book-row {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.2vw, 24px);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: clamp(270px, 44dvh, 440px);
+  padding: clamp(26px, 4vw, 54px) clamp(18px, 5vw, 76px);
+  border: 0;
+  background: transparent;
+  text-align: center;
+  transform-origin: 50% 50%;
+  transition:
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.public-library-book-row:hover .public-library-open-book,
+.public-library-book-row.is-selected .public-library-open-book {
+  transform: scale(1.025);
+}
+
+.public-library-book-row:active {
+  transform: scale(0.99);
+}
+
+.public-library-open-book {
+  display: flex;
+  align-items: stretch;
+  width: min(500px, 72vw);
+  aspect-ratio: 1.52 / 1;
+  perspective: 700px;
+  filter: drop-shadow(0 9px 12px rgb(0 0 0 / 0.13));
+  transform-origin: 50% 50%;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.public-library-open-book > span {
+  position: relative;
+  width: 50%;
+  overflow: hidden;
+  background: rgb(238 238 238);
+}
+
+.public-library-open-book > span:first-child {
+  transform: rotateY(3deg);
+  transform-origin: right center;
+}
+
+.public-library-open-book > span:last-child {
+  transform: rotateY(-3deg);
+  transform-origin: left center;
+}
+
+.public-library-open-book img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.public-library-book-copy h2 {
+  font-size: clamp(18px, 2.8vw, 32px);
+  line-height: 1.05;
+  font-weight: 400;
+}
+
+.public-library-book-copy {
+  width: min(680px, 88vw);
+}
+
+.public-library-book-copy p {
+  margin: 0.65rem auto 0;
+  max-width: 58ch;
+  font-size: clamp(12px, 1.5vw, 16px);
+  line-height: 1.45;
+  color: rgb(0 0 0 / 0.58);
+}
+
+.book-comment-layer {
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 320ms ease, filter 320ms ease;
+}
+
+.book-comment-layer.is-hidden {
+  opacity: 0;
+  filter: blur(5px);
+}
+
+.book-comment-balloon {
+  pointer-events: none;
+  min-width: 82px;
+  max-width: min(220px, 78%);
+  padding: 10px 13px 11px;
+  border-radius: 15px;
+  background: rgb(188 188 188 / 0.94);
+  color: black;
+  font-size: clamp(10px, 1.25vw, 13px);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  filter: drop-shadow(0 6px 12px rgb(0 0 0 / 0.12));
+}
+
+.book-comment-balloon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  background: inherit;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+  transform: translateX(-50%) rotate(-45deg);
+}
+
+.book-comment-delete {
+  pointer-events: auto;
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 2;
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.book-comment-balloon:has(.book-comment-delete) > p {
+  padding-right: 10px;
+}
+
+.book-comment-editor {
+  pointer-events: auto;
+  z-index: 5;
+  width: min(238px, 88%);
+  max-width: 88%;
+  padding: 16px 12px 10px;
+}
+
+.book-comment-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 0;
+  border-bottom: 1px solid rgb(0 0 0 / 0.28);
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+}
+
+.book-comment-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.book-comment-emojis {
+  display: flex;
+  gap: 5px;
+}
+
+.book-comment-emojis button,
+.book-comment-editor-actions > button {
+  border: 0;
+  padding: 2px;
+  background: transparent;
+  font-size: 11px;
+}
+
+.book-comment-editor-actions > button {
+  padding: 3px 5px;
+  font-weight: 400;
+}
+
+.book-comment-editor-actions button:disabled {
+  opacity: 0.35;
+}
+
+.book-comment-editor-error {
+  margin-top: 6px;
+  color: rgb(132 0 0);
+  font-size: 10px;
+}
+
+@media (max-width: 560px) {
+  .public-library-drawer {
+    height: min(78dvh, 680px);
+  }
+
+  .public-library-book-row {
+    gap: 13px;
+    min-height: 250px;
+    padding: 24px 12px 28px;
+  }
+
+  .public-library-open-book {
+    width: min(360px, 82vw);
+  }
+
+  .public-library-book-copy h2 {
+    font-size: 17px;
+  }
+
+  .public-library-book-copy p {
+    display: -webkit-box;
+    margin-top: 5px;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    font-size: 11px;
+  }
+
+  .book-comment-balloon {
+    max-width: 88%;
+    padding: 8px 10px 9px;
+    border-radius: 12px;
+    font-size: 9px;
+  }
 }
 
 .public-book-background-layer {
@@ -503,6 +669,12 @@ const libraryStyles = `
   animation-delay: var(--public-nav-delay, 0ms);
 }
 
+.public-nav-item.is-continuing {
+  transform: translate3d(0, 0, 0) scale(1);
+  opacity: 1;
+  filter: blur(0);
+}
+
 .public-nav-item.is-leaving,
 .public-book-label.is-leaving {
   animation: elastic-center-scale 720ms cubic-bezier(0.22, 0.88, 0.3, 1) reverse both;
@@ -576,12 +748,6 @@ const libraryStyles = `
 
 
 `;
-
-const CATEGORY_LABELS: Record<Book["category"], string> = {
-  objects: "OBJ",
-  graphics: "GRPH",
-  concepts: "CNCP",
-};
 
 function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : "Unable to load the books.";
@@ -670,10 +836,27 @@ export default function PublicBookLibrary({
   onBookChange,
 }: PublicBookLibraryProps) {
   void onLogin;
+  const { isAdmin } = useAdminSession();
+  const [navigationContinuesFromModels] = useState(() => {
+    const continues =
+      window.sessionStorage.getItem("gstudios:nav-continuity") ===
+      "models-to-library";
+
+    if (continues) {
+      window.sessionStorage.removeItem("gstudios:nav-continuity");
+    }
+
+    return continues;
+  });
 
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
   const [pages, setPages] = useState<BookPage[]>([]);
+  const [bookComments, setBookComments] = useState<BookComment[]>([]);
+  const [commentMode, setCommentMode] = useState(false);
+  const [bookPreviews, setBookPreviews] = useState<
+    Record<string, { cover: string | null; lastPage: string | null }>
+  >({});
   const [loadingBooks, setLoadingBooks] = useState(true);
   const [loadingPages, setLoadingPages] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -682,7 +865,12 @@ export default function PublicBookLibrary({
   const [loginMounted, setLoginMounted] = useState(false);
   const [loginMotion, setLoginMotion] =
     useState<CenterMotion>("outside");
-  const [barVisible, setBarVisible] = useState(false);
+  const [barVisible, setBarVisible] = useState(
+    navigationContinuesFromModels
+  );
+  const [activeNavId, setActiveNavId] = useState<"library" | "models">(
+    "library"
+  );
   const [viewerMotion, setViewerMotion] =
     useState<CenterMotion>("outside");
   const [viewerFastMotion, setViewerFastMotion] = useState(false);
@@ -712,6 +900,7 @@ export default function PublicBookLibrary({
     finish: () => void;
     timeout: number;
   } | null>(null);
+  const previewRequestsRef = useRef(new Set<string>());
 
   const [backgroundLayers, setBackgroundLayers] = useState([
     { id: 0, color: backgroundColorRef.current },
@@ -721,6 +910,53 @@ export default function PublicBookLibrary({
     () => books.find((book) => book.id === selectedBookId) ?? null,
     [books, selectedBookId]
   );
+
+  useEffect(() => {
+    if (!isAdmin) setCommentMode(false);
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!selectedBook || pages.length === 0) return;
+    setBookPreviews((current) => ({
+      ...current,
+      [selectedBook.id]: {
+        cover: pages[0]?.public_url ?? null,
+        lastPage: pages[pages.length - 1]?.public_url ?? null,
+      },
+    }));
+  }, [pages, selectedBook]);
+
+  useEffect(() => {
+    if (!bookBalloonOpen || books.length === 0) return;
+    let active = true;
+
+    books.forEach((book) => {
+      if (bookPreviews[book.id] || previewRequestsRef.current.has(book.id)) {
+        return;
+      }
+
+      previewRequestsRef.current.add(book.id);
+      void listBookPages(book.id)
+        .then((bookPages) => {
+          if (!active) return;
+          setBookPreviews((current) => ({
+            ...current,
+            [book.id]: {
+              cover: bookPages[0]?.public_url ?? null,
+              lastPage: bookPages[bookPages.length - 1]?.public_url ?? null,
+            },
+          }));
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          previewRequestsRef.current.delete(book.id);
+        });
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [bookBalloonOpen, bookPreviews, books]);
 
   useEffect(() => {
     const nextColor = bookBackgroundColor(selectedBook);
@@ -812,6 +1048,15 @@ export default function PublicBookLibrary({
   useEffect(() => {
     selectedBookIdRef.current = selectedBookId;
   }, [selectedBookId]);
+
+  useEffect(() => {
+    if (!selectedBook) return;
+    void trackAnalyticsEvent({
+      eventName: "book_open",
+      targetType: "book",
+      targetId: selectedBook.slug,
+    });
+  }, [selectedBook]);
 
   const cancelViewerAnimation = useCallback(() => {
     if (viewerAnimationTimerRef.current) {
@@ -965,7 +1210,10 @@ export default function PublicBookLibrary({
       setError(null);
 
       try {
-        const nextPages = await listBookPages(book.id);
+        const [nextPages, nextComments] = await Promise.all([
+          listBookPages(book.id),
+          listVisibleBookComments(book.id),
+        ]);
         const savedSnapshot = savedBookSessionRef.current;
 
         const restoredPage =
@@ -991,6 +1239,7 @@ export default function PublicBookLibrary({
           setViewerMotion("outside");
           setSelectedBookId(book.id);
           setPages(nextPages);
+          setBookComments(nextComments);
           setViewerPage(restoredPage);
         });
 
@@ -1054,9 +1303,11 @@ export default function PublicBookLibrary({
             return loadedPages;
           }
         );
+        const nextCommentsPromise = listVisibleBookComments(book.id);
 
-        const [nextPages] = await Promise.all([
+        const [nextPages, nextComments] = await Promise.all([
           nextPagesPromise,
+          nextCommentsPromise,
           wait(BOOK_SWITCH_LEAVE_TOTAL_DURATION),
         ]);
 
@@ -1074,6 +1325,7 @@ export default function PublicBookLibrary({
           setSelectedBookId(book.id);
           selectedBookIdRef.current = book.id;
           setPages(nextPages);
+          setBookComments(nextComments);
           setViewerPage(0);
           setLoadingPages(false);
         });
@@ -1320,16 +1572,42 @@ export default function PublicBookLibrary({
     }
   };
 
-  const handleThreeD = async () => {
-    if (transitionBusyRef.current || loginMounted) {
+  const handleNavigateFromAdmin = async () => {
+    if (!loginMounted || transitionBusyRef.current) {
       return;
     }
 
     transitionBusyRef.current = true;
     setTransitionBusy(true);
-    setNavigationLeaving(true);
     setBookBalloonOpen(false);
     setBarVisible(false);
+    setLoginMotion("leaving");
+
+    if (selectedBook) {
+      writeBookSession(selectedBook.slug, viewerPage);
+    }
+
+    window.sessionStorage.setItem(BOOK_INDEX_RETURN_KEY, "true");
+    window.sessionStorage.setItem(BOOK_INTRO_RETURN_KEY, "true");
+    window.sessionStorage.removeItem("revealDone");
+    window.sessionStorage.removeItem("returnFromExample");
+
+    await wait(BOOK_LEAVE_TOTAL_DURATION);
+
+    if (mountedRef.current) {
+      onBack();
+    }
+  };
+
+  const handleThreeD = async () => {
+    if (transitionBusyRef.current || loginMounted) {
+      return;
+    }
+
+    setActiveNavId("models");
+    transitionBusyRef.current = true;
+    setTransitionBusy(true);
+    setBookBalloonOpen(false);
     cancelViewerAnimation();
     setViewerMotion("leaving");
 
@@ -1353,6 +1631,40 @@ export default function PublicBookLibrary({
     void switchToBook(book, true);
   };
 
+  const handleCreateComment = useCallback(
+    async (input: {
+      bookPageId: string;
+      body: string;
+      anchorX: number;
+      anchorY: number;
+    }) => {
+      if (!selectedBook || !isAdmin) {
+        throw new Error("Administrator login required.");
+      }
+
+      const comment = await createBookComment({
+        bookId: selectedBook.id,
+        bookPageId: input.bookPageId,
+        body: input.body,
+        anchorX: input.anchorX,
+        anchorY: input.anchorY,
+      });
+      setBookComments((current) => [...current, comment]);
+    },
+    [isAdmin, selectedBook]
+  );
+
+  const handleDeleteComment = useCallback(
+    async (commentId: string) => {
+      if (!isAdmin) throw new Error("Administrator login required.");
+      await deleteBookComment(commentId);
+      setBookComments((current) =>
+        current.filter((comment) => comment.id !== commentId)
+      );
+    },
+    [isAdmin]
+  );
+
   const handlePageChange = useCallback(
     (pageIndex: number) => {
       setViewerPage(pageIndex);
@@ -1364,6 +1676,12 @@ export default function PublicBookLibrary({
         };
 
         writeBookSession(selectedBook.slug, pageIndex);
+        void trackAnalyticsEvent({
+          eventName: "book_page_view",
+          targetType: "book_page",
+          targetId: `${selectedBook.slug}:${pageIndex}`,
+          valueInt: pageIndex,
+        });
       }
     },
     [selectedBook]
@@ -1392,7 +1710,9 @@ export default function PublicBookLibrary({
           : "is-outside";
 
   const navMotionClass = barVisible
-    ? "is-visible"
+    ? navigationContinuesFromModels
+      ? "is-continuing"
+      : "is-visible"
     : transitionBusy || navigationLeaving
       ? "is-leaving"
       : "is-outside";
@@ -1428,12 +1748,12 @@ export default function PublicBookLibrary({
         <button
           type="button"
           aria-label="Close book list"
-          className="fixed inset-0 z-[141] cursor-default bg-transparent"
+          className="fixed inset-0 z-[141] cursor-default bg-black/0"
           onClick={() => setBookBalloonOpen(false)}
         />
       )}
 
-      <div className="public-book-nav fixed z-[170] flex items-center">
+      <div className="public-book-nav fixed z-[170]">
         <div
           className={`public-nav-item ${navMotionClass}`}
           style={
@@ -1447,23 +1767,16 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => void handleBack()}
             disabled={transitionBusy}
-            className="public-book-nav-icon flex items-center justify-center rounded-full border border-black/35 bg-transparent transition-transform duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            data-analytics-event="navigation_click"
+            data-analytics-type="navigation"
+            data-analytics-id="navigate"
+            className="public-book-control-column disabled:pointer-events-none disabled:opacity-40"
             aria-label={
-              loginMounted ? "Back to book" : "Back"
+              loginMounted ? "Back to book" : "Navigate"
             }
-            title={loginMounted ? "Back to book" : "Back"}
+            title={loginMounted ? "Back to book" : "Navigate"}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              fill="currentColor"
-              className="bi bi-globe-europe-africa"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-            >
-              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0M3.668 2.501l-.288.646a.847.847 0 0 0 1.479.815l.245-.368a.81.81 0 0 1 1.034-.275.81.81 0 0 0 .724 0l.261-.13a1 1 0 0 1 .775-.05l.984.34q.118.04.243.054c.784.093.855.377.694.801-.155.41-.616.617-1.035.487l-.01-.003C8.274 4.663 7.748 4.5 6 4.5 4.8 4.5 3.5 5.62 3.5 7c0 1.96.826 2.166 1.696 2.382.46.115.935.233 1.304.618.449.467.393 1.181.339 1.877C6.755 12.96 6.674 14 8.5 14c1.75 0 3-3.5 3-4.5 0-.262.208-.468.444-.7.396-.392.87-.86.556-1.8-.097-.291-.396-.568-.641-.756-.174-.133-.207-.396-.052-.551a.33.33 0 0 1 .42-.042l1.085.724c.11.072.255.058.348-.035.15-.15.415-.083.489.117.16.43.445 1.05.849 1.357L15 8A7 7 0 1 1 3.668 2.501" />
-            </svg>
+            <span>NAVIGATE</span>
           </button>
         </div>
 
@@ -1478,23 +1791,27 @@ export default function PublicBookLibrary({
         >
           <button
             type="button"
-            onClick={() =>
-              setBookBalloonOpen((open) => !open)
-            }
+            onClick={() => {
+              setActiveNavId("library");
+              setBookBalloonOpen((open) => !open);
+            }}
             disabled={loginMounted}
-            className={`public-book-nav-icon flex items-center justify-center rounded-full border bg-transparent transition-all duration-300 hover:scale-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
-              bookBalloonOpen
-                ? "border-black text-black"
-                : "border-black/35 text-black"
+            data-analytics-event="navigation_click"
+            data-analytics-type="navigation"
+            data-analytics-id="library"
+            className={`public-book-control-column disabled:pointer-events-none disabled:opacity-40 ${
+              !loginMounted &&
+              bookBalloonOpen &&
+              activeNavId === "library"
+                ? "is-active"
+                : ""
             }`}
             aria-label="Choose a book"
             aria-expanded={bookBalloonOpen}
-            aria-controls="public-book-balloon"
+            aria-controls="public-book-library"
             title="Choose a book"
           >
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-book" viewBox="0 0 16 16">
-  <path d="M1 2.828c.885-.37 2.154-.769 3.388-.893 1.33-.134 2.458.063 3.112.752v9.746c-.935-.53-2.12-.603-3.213-.493-1.18.12-2.37.461-3.287.811zm7.5-.141c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.923c-.918-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783"/>
-</svg>
+            <span>LIBRARY</span>
           </button>
         </div>
 
@@ -1511,15 +1828,18 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => void toggleLogin()}
             disabled={transitionBusy}
-            className={`public-book-nav-text flex items-center justify-center rounded-full border bg-transparent text-[13px] transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40 ${
-              loginMounted
-                ? "border-black text-black"
-                : "border-black/35 text-black"
+            data-analytics-event="navigation_click"
+            data-analytics-type="navigation"
+            data-analytics-id="login"
+            className={`public-book-control-column disabled:pointer-events-none disabled:opacity-40 ${
+              loginMounted ? "is-active" : ""
             }`}
             aria-expanded={loginMounted}
             aria-label="Login"
           >
-            <ScrambleText text="LOGIN" />
+            <span>
+              <ScrambleText text="LOGIN" />
+            </span>
           </button>
         </div>
 
@@ -1538,44 +1858,68 @@ export default function PublicBookLibrary({
             onPointerEnter={() => void preloadThreeDExperience()}
             onFocus={() => void preloadThreeDExperience()}
             disabled={transitionBusy || loginMounted}
-            className="public-book-nav-text flex items-center justify-center rounded-full border border-black/35 bg-transparent text-[13px] text-black transition-all duration-300 hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            data-analytics-event="model_open"
+            data-analytics-type="model"
+            data-analytics-id="models"
+            className={`public-book-control-column disabled:pointer-events-none disabled:opacity-40 ${
+              !loginMounted && activeNavId === "models" ? "is-active" : ""
+            }`}
           >
-            3D
+            <span>MODELS</span>
           </button>
         </div>
+
+        {isAdmin && (
+          <div
+            className={`public-nav-item ${navMotionClass}`}
+            style={
+              {
+                "--public-nav-delay": "280ms",
+                "--public-nav-exit-delay": "0ms",
+              } as React.CSSProperties
+            }
+          >
+            <button
+              type="button"
+              onClick={() => setCommentMode((active) => !active)}
+              disabled={transitionBusy || loginMounted}
+              data-analytics-event="navigation_click"
+              data-analytics-type="interface"
+              data-analytics-id="comment-mode"
+              className={`public-book-control-column disabled:pointer-events-none disabled:opacity-40 ${
+                commentMode ? "is-active" : ""
+              }`}
+              aria-pressed={commentMode}
+              aria-label="Comment on book pages"
+            >
+              <span>COMMENT</span>
+            </button>
+          </div>
+        )}
       </div>
 
       <aside
-        id="public-book-balloon"
-        className={`public-book-balloon fixed left-4 top-[76px] z-[150] flex max-h-[72vh] w-[min(88vw,390px)] origin-top-left flex-col bg-white/95 p-5 shadow-[0_10px_65px_rgba(0,0,0,0.06)] backdrop-blur-xl transition-[transform,opacity,filter] duration-500 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] sm:left-[74px] sm:top-[82px] ${
+        id="public-book-library"
+        className={`public-library-drawer fixed z-[150] flex flex-col ${
           bookBalloonOpen && !loginMounted
-            ? "pointer-events-auto scale-100 opacity-100 blur-0"
-            : "pointer-events-none scale-0 opacity-0 blur-[10px]"
+            ? "is-open pointer-events-auto"
+            : "pointer-events-none"
         }`}
         aria-hidden={!bookBalloonOpen || loginMounted}
       >
-        <div className="absolute -top-2 left-[46px] h-4 w-4 rotate-45 border-l border-t border-black/25 bg-white" />
+        <button
+          type="button"
+          onClick={() => setBookBalloonOpen(false)}
+          data-analytics-event="navigation_click"
+          data-analytics-type="interface"
+          data-analytics-id="library-close"
+          className="absolute right-5 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 active:scale-95 sm:right-8"
+          aria-label="Close book list"
+        >
+          ×
+        </button>
 
-        <div className="relative mb-4 flex items-start justify-between gap-5">
-          <div>
-
-
-            <h1 className="mt-1 text-[22px] font-normal">
-              ARCHIVE
-            </h1>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setBookBalloonOpen(false)}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/20 transition-transform hover:scale-110 active:scale-95"
-            aria-label="Close book list"
-          >
-            <span aria-hidden="true">×</span>
-          </button>
-        </div>
-
-        <div className="public-book-scroll min-h-0 flex-1 overflow-y-auto border-t border-black/15">
+        <div className="public-book-scroll min-h-0 flex-1 overflow-y-auto">
           {loadingBooks ? (
             <p className="py-6 text-center text-[14px] text-black/50">
               ...
@@ -1586,42 +1930,51 @@ export default function PublicBookLibrary({
             </p>
           ) : (
             books.map((book) => {
-              const selected =
-                book.id === selectedBookId;
+              const selected = book.id === selectedBookId;
+              const preview = bookPreviews[book.id];
 
               return (
                 <button
                   key={book.id}
                   type="button"
                   onClick={() => selectBook(book)}
-                  className={`grid w-full grid-cols-[56px_minmax(0,1fr)_auto] items-center gap-3 border-b border-black/15 px-1 py-4 text-left transition-all duration-300 ${
-                    selected
-                      ? "translate-x-1 text-black"
-                      : "text-black/60 hover:translate-x-1 hover:text-black"
+                  data-analytics-event="navigation_click"
+                  data-analytics-type="book"
+                  data-analytics-id={book.slug}
+                  className={`public-library-book-row ${
+                    selected ? "is-selected" : ""
                   }`}
                 >
-                  <span className="text-[12px] tracking-wide">
-                    {CATEGORY_LABELS[book.category]}
-                  </span>
-
-                  <span className="min-w-0">
-                    <span className="block truncate text-[16px]">
-                      {book.title}
+                  <span
+                    className="public-library-open-book"
+                    aria-hidden="true"
+                  >
+                    <span>
+                      {preview?.lastPage && (
+                        <img
+                          src={preview.lastPage}
+                          alt=""
+                          draggable={false}
+                          loading="lazy"
+                        />
+                      )}
                     </span>
-
-                    {book.description && (
-                      <span className="mt-1 block truncate text-[12px] text-black/45">
-                        {book.description}
-                      </span>
-                    )}
+                    <span>
+                      {preview?.cover && (
+                        <img
+                          src={preview.cover}
+                          alt=""
+                          draggable={false}
+                          loading="lazy"
+                        />
+                      )}
+                    </span>
                   </span>
-
-                  <span className="flex min-w-[18px] justify-end text-[13px]">
-                    {book.is_featured
-                      ? "*"
-                      : selected
-                        ? ">"
-                        : ""}
+                  <span className="public-library-book-copy min-w-0">
+                    <h2>{book.title}</h2>
+                    {book.description && (
+                      <p>{book.description}</p>
+                    )}
                   </span>
                 </button>
               );
@@ -1630,25 +1983,7 @@ export default function PublicBookLibrary({
         </div>
       </aside>
 
-      <div className="public-book-label-wrap pointer-events-none fixed inset-x-0 top-5 z-[100] flex justify-center px-[230px] sm:top-7">
-        {selectedBook && (
-          <p
-            className={`public-book-label max-w-full truncate text-center text-[13px] tracking-[0.12em] text-black/55 ${navMotionClass}`}
-            style={
-              {
-                "--public-nav-delay": "280ms",
-                "--public-nav-exit-delay": "0ms",
-              } as React.CSSProperties
-            }
-          >
-            {selectedBook.is_featured
-              ? "FEATURED - "
-              : ""}
-          </p>
-        )}
-      </div>
-
-      <main className="public-book-main relative z-10 flex h-full w-full items-center justify-center overflow-hidden px-2 sm:px-5">
+      <main className="public-book-main relative z-10 flex h-full w-full items-center justify-center overflow-hidden">
         {loadingBooks ||
         (loadingPages && !selectedBook) ? (
           <div
@@ -1693,12 +2028,17 @@ export default function PublicBookLibrary({
                 key={selectedBook.id}
                 book={selectedBook}
                 pages={pages}
+                comments={bookComments}
+                commentMode={commentMode}
+                canManageComments={isAdmin}
                 initialPage={viewerPage}
                 bookMotionClassName={
                   viewerStageClass
                 }
                 onPageChange={handlePageChange}
                 onReady={handleViewerReady}
+                onCreateComment={handleCreateComment}
+                onDeleteComment={handleDeleteComment}
               />
             </div>
           </div>
@@ -1707,7 +2047,7 @@ export default function PublicBookLibrary({
 
       {loginMounted && (
         <div
-          className={`public-login-stage fixed inset-0 z-[130] overflow-hidden bg-white ${loginMotionClass}`}
+          className={`public-login-stage fixed inset-0 z-[180] overflow-hidden bg-white ${loginMotionClass}`}
           aria-hidden={
             loginMotion === "outside" ||
             loginMotion === "leaving"
@@ -1721,6 +2061,11 @@ export default function PublicBookLibrary({
                 loginMotion === "visible"
               }
               onBack={() => void closeLogin()}
+              onNavigate={() => void handleNavigateFromAdmin()}
+              onLibrary={() => void closeLogin()}
+              onModels={() => {
+                void closeLogin().then(() => handleThreeD());
+              }}
             />
           </Suspense>
         </div>

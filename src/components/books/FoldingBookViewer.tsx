@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -14,14 +15,27 @@ import {
 import { createPortal } from "react-dom";
 import HTMLFlipBook from "react-pageflip";
 import type { Book, BookPage, BookPageFormat } from "@/types/books";
+import type { BookComment } from "@/types/bookComments";
+
+interface CreatePageCommentRequest {
+  bookPageId: string;
+  body: string;
+  anchorX: number;
+  anchorY: number;
+}
 
 interface FoldingBookViewerProps {
   book: Book;
   pages: BookPage[];
+  comments?: BookComment[];
+  commentMode?: boolean;
+  canManageComments?: boolean;
   initialPage?: number;
   bookMotionClassName?: string;
   onPageChange?: (pageIndex: number) => void;
   onReady?: (bookId: string) => void;
+  onCreateComment?: (input: CreatePageCommentRequest) => Promise<void>;
+  onDeleteComment?: (commentId: string) => Promise<void>;
 }
 
 type PageOrientation = "portrait" | "landscape";
@@ -52,7 +66,30 @@ interface FlipEvent<T = unknown> {
 interface PageFaceProps {
   page: BookPage;
   isCover: boolean;
+  comments: BookComment[];
+  commentsHidden: boolean;
+  commentMode: boolean;
+  canManageComments: boolean;
+  activeDraft: CommentDraft | null;
+  draftBody: string;
+  commentBusy: boolean;
+  commentError: string | null;
   onImageReady?: () => void;
+  onPlaceComment: (
+    pageId: string,
+    anchorX: number,
+    anchorY: number
+  ) => void;
+  onDraftBodyChange: (body: string) => void;
+  onSubmitDraft: () => void;
+  onCancelDraft: () => void;
+  onDeleteComment: (commentId: string) => void;
+}
+
+interface CommentDraft {
+  pageId: string;
+  anchorX: number;
+  anchorY: number;
 }
 
 interface TapSnapshot {
@@ -121,6 +158,7 @@ const DOUBLE_TAP_DELAY = 360;
 const DOUBLE_TAP_DISTANCE = 42;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
+const COMMENT_EMOJIS = ["☺︎", "♥", "★", "🌊"];
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -147,25 +185,176 @@ function fitOpenSpread(
   };
 }
 
+function commentBubbleTransform(_anchorX: number): string {
+  return "translate(-50%, -100%)";
+}
+
 const PageFace = forwardRef<HTMLDivElement, PageFaceProps>(function PageFace(
-  { page, isCover, onImageReady },
+  {
+    page,
+    isCover,
+    comments,
+    commentsHidden,
+    commentMode,
+    canManageComments,
+    activeDraft,
+    draftBody,
+    commentBusy,
+    commentError,
+    onImageReady,
+    onPlaceComment,
+    onDraftBodyChange,
+    onSubmitDraft,
+    onCancelDraft,
+    onDeleteComment,
+  },
   ref
 ) {
+  const placeComment = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!commentMode || !canManageComments) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("[data-book-comment-ui]")
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    onPlaceComment(
+      page.id,
+      clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1),
+      clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1)
+    );
+  };
+
   return (
     <div
       ref={ref}
       data-density={isCover ? "hard" : "soft"}
-      className="h-full w-full overflow-hidden bg-white shadow-[inset_0_0_18px_rgba(0,0,0,0.08)]"
+      className="h-full w-full overflow-visible bg-white shadow-[inset_0_0_18px_rgba(0,0,0,0.08)]"
     >
-      <img
-        src={page.public_url}
-        alt={`Page ${page.page_number}: ${page.file_name}`}
-        draggable={false}
-        decoding="async"
-        onLoad={onImageReady}
-        onError={onImageReady}
-        className="pointer-events-none h-full w-full select-none object-cover object-center"
-      />
+      <div
+        data-book-page-face="true"
+        onPointerDown={placeComment}
+        className={`relative h-full w-full overflow-visible ${
+          commentMode ? "cursor-crosshair" : ""
+        }`}
+      >
+        <img
+          src={page.public_url}
+          alt={`Page ${page.page_number}: ${page.file_name}`}
+          draggable={false}
+          decoding="async"
+          onLoad={onImageReady}
+          onError={onImageReady}
+          className="pointer-events-none h-full w-full select-none object-cover object-center"
+        />
+
+        <div
+          className={`book-comment-layer absolute inset-0 z-20 ${
+            commentsHidden ? "is-hidden" : ""
+          }`}
+          aria-hidden={commentsHidden}
+        >
+          {comments.map((comment) => (
+            <div
+              key={comment.id}
+              data-book-comment-ui="true"
+              className="book-comment-balloon absolute"
+              style={{
+                left: `${comment.anchor_x * 100}%`,
+                top: `${comment.anchor_y * 100}%`,
+                transform: commentBubbleTransform(comment.anchor_x),
+              }}
+            >
+              {canManageComments && (
+                <button
+                  type="button"
+                  className="book-comment-delete"
+                  aria-label="Delete comment"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onDeleteComment(comment.id);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+              <p>{comment.body}</p>
+            </div>
+          ))}
+
+          {activeDraft?.pageId === page.id && (
+            <form
+              data-book-comment-ui="true"
+              className="book-comment-balloon book-comment-editor absolute"
+              style={{
+                left: `${activeDraft.anchorX * 100}%`,
+                top: `${activeDraft.anchorY * 100}%`,
+                transform: commentBubbleTransform(activeDraft.anchorX),
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onSubmit={(event) => {
+                event.preventDefault();
+                onSubmitDraft();
+              }}
+            >
+              <button
+                type="button"
+                className="book-comment-delete"
+                aria-label="Cancel comment"
+                onClick={onCancelDraft}
+              >
+                ×
+              </button>
+              <textarea
+                autoFocus
+                value={draftBody}
+                maxLength={600}
+                placeholder="WRITE A COMMENT…"
+                onChange={(event) => onDraftBodyChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") onCancelDraft();
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    onSubmitDraft();
+                  }
+                }}
+              />
+              <div className="book-comment-editor-actions">
+                <div className="book-comment-emojis" aria-label="Add emoji">
+                  {COMMENT_EMOJIS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => onDraftBodyChange(`${draftBody}${emoji}`)}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="submit"
+                  disabled={commentBusy || !draftBody.trim()}
+                >
+                  {commentBusy ? "…" : "SEND"}
+                </button>
+              </div>
+              {commentError && (
+                <p className="book-comment-editor-error">{commentError}</p>
+              )}
+            </form>
+          )}
+        </div>
+      </div>
     </div>
   );
 });
@@ -173,10 +362,15 @@ const PageFace = forwardRef<HTMLDivElement, PageFaceProps>(function PageFace(
 export default function FoldingBookViewer({
   book,
   pages,
+  comments = [],
+  commentMode = false,
+  canManageComments = false,
   initialPage = 0,
   bookMotionClassName = "is-visible",
   onPageChange,
   onReady,
+  onCreateComment,
+  onDeleteComment,
 }: FoldingBookViewerProps) {
   const bookRef = useRef<FlipBookHandle | null>(null);
   const sizeObserverTargetRef = useRef<HTMLDivElement | null>(null);
@@ -197,6 +391,7 @@ export default function FoldingBookViewer({
   const closeTimerRef = useRef<number | null>(null);
   const zoomAnimationsRef = useRef<Array<{ stop: () => void }>>([]);
   const viewportSizeRef = useRef({ width: 1, height: 1 });
+  const zoomImagePromisesRef = useRef(new Map<string, Promise<void>>());
 
   const pageFormat = book.page_format ?? "a4_long_edge";
   const pageMetrics = PAGE_FORMAT_METRICS[pageFormat];
@@ -224,6 +419,13 @@ export default function FoldingBookViewer({
   const [horizontalOffset, setHorizontalOffset] = useState(0);
   const [magnifierOpen, setMagnifierOpen] = useState(false);
   const [zoomClosing, setZoomClosing] = useState(false);
+  const [commentsHeldHidden, setCommentsHeldHidden] = useState(false);
+  const [zoomCommentsHidden, setZoomCommentsHidden] = useState(false);
+  const [commentDraft, setCommentDraft] = useState<CommentDraft | null>(null);
+  const [commentDraftBody, setCommentDraftBody] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [foldShadowActive, setFoldShadowActive] = useState(false);
   const [layoutMeasured, setLayoutMeasured] = useState(false);
   const [pageSize, setPageSize] = useState(() =>
     fitOpenSpread(pageMetrics, 640, 480)
@@ -231,6 +433,16 @@ export default function FoldingBookViewer({
   const zoomScale = useMotionValue(1);
   const panX = useMotionValue(0);
   const panY = useMotionValue(0);
+  const commentsByPage = useMemo(() => {
+    const grouped = new Map<string, BookComment[]>();
+    comments.forEach((comment) => {
+      const pageComments = grouped.get(comment.book_page_id) ?? [];
+      pageComments.push(comment);
+      grouped.set(comment.book_page_id, pageComments);
+    });
+    return grouped;
+  }, [comments]);
+  const hasComments = comments.length > 0;
 
   const notifyReadyWhenPaintable = useCallback(() => {
     if (
@@ -257,6 +469,115 @@ export default function FoldingBookViewer({
       notifyReadyWhenPaintable();
     },
     [notifyReadyWhenPaintable]
+  );
+
+  const prepareZoomImages = useCallback(() => {
+    const pageIndex = currentPageRef.current;
+    const visibleIndices =
+      pageIndex === 0 || pageIndex >= pages.length - 1
+        ? [pageIndex]
+        : [pageIndex, Math.min(pageIndex + 1, pages.length - 1)];
+
+    return Promise.all(
+      visibleIndices.map((index) => {
+        const page = pages[index];
+        if (!page) return Promise.resolve();
+
+        const existing = zoomImagePromisesRef.current.get(page.public_url);
+        if (existing) return existing;
+
+        const promise = new Promise<void>((resolve) => {
+          const image = new Image();
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          image.onload = () => {
+            if (typeof image.decode === "function") {
+              void image.decode().catch(() => undefined).finally(finish);
+            } else {
+              finish();
+            }
+          };
+          image.onerror = finish;
+          image.decoding = "async";
+          image.src = page.public_url;
+          window.setTimeout(finish, 5000);
+        });
+
+        zoomImagePromisesRef.current.set(page.public_url, promise);
+        return promise;
+      })
+    ).then(() => undefined);
+  }, [pages]);
+
+  const placeComment = useCallback(
+    (pageId: string, anchorX: number, anchorY: number) => {
+      if (!commentMode || !canManageComments) return;
+      setCommentError(null);
+      setCommentDraftBody("");
+      setCommentDraft({ pageId, anchorX, anchorY });
+    },
+    [canManageComments, commentMode]
+  );
+
+  const cancelCommentDraft = useCallback(() => {
+    if (commentBusy) return;
+    setCommentDraft(null);
+    setCommentDraftBody("");
+    setCommentError(null);
+  }, [commentBusy]);
+
+  const submitCommentDraft = useCallback(async () => {
+    if (
+      !commentDraft ||
+      !commentDraftBody.trim() ||
+      !onCreateComment ||
+      commentBusy
+    ) {
+      return;
+    }
+
+    setCommentBusy(true);
+    setCommentError(null);
+    try {
+      await onCreateComment({
+        bookPageId: commentDraft.pageId,
+        body: commentDraftBody,
+        anchorX: commentDraft.anchorX,
+        anchorY: commentDraft.anchorY,
+      });
+      setCommentDraft(null);
+      setCommentDraftBody("");
+    } catch (error) {
+      setCommentError(
+        error instanceof Error ? error.message : "Unable to save the comment."
+      );
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [commentBusy, commentDraft, commentDraftBody, onCreateComment]);
+
+  const deleteComment = useCallback(
+    async (commentId: string) => {
+      if (!onDeleteComment || commentBusy) return;
+      setCommentBusy(true);
+      setCommentError(null);
+      try {
+        await onDeleteComment(commentId);
+      } catch (error) {
+        setCommentError(
+          error instanceof Error
+            ? error.message
+            : "Unable to delete the comment."
+        );
+      } finally {
+        setCommentBusy(false);
+      }
+    },
+    [commentBusy, onDeleteComment]
   );
 
   const stopZoomAnimations = useCallback(() => {
@@ -346,6 +667,8 @@ export default function FoldingBookViewer({
       magnifierOpenRef.current = true;
       zoomClosingRef.current = false;
       setZoomClosing(false);
+      setZoomCommentsHidden(true);
+      setCommentDraft(null);
       setMagnifierOpen(true);
       zoomScale.set(1);
       panX.set(0);
@@ -436,6 +759,9 @@ export default function FoldingBookViewer({
       panX.set(0);
       panY.set(0);
       closeTimerRef.current = null;
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => setZoomCommentsHidden(false));
+      });
     }, 430);
   }, [panX, panY, stopZoomAnimations, zoomScale]);
 
@@ -514,6 +840,11 @@ export default function FoldingBookViewer({
     zoomClosingRef.current = false;
     setMagnifierOpen(false);
     setZoomClosing(false);
+    setCommentsHeldHidden(false);
+    setZoomCommentsHidden(false);
+    setCommentDraft(null);
+    setCommentDraftBody("");
+    setCommentError(null);
     zoomScale.set(1);
     panX.set(0);
     panY.set(0);
@@ -521,6 +852,22 @@ export default function FoldingBookViewer({
     activeGestureRef.current = null;
     suppressPageFlipRef.current = false;
   }, [book.id, panX, panY, safeInitialPage, zoomScale]);
+
+  useEffect(() => {
+    setCommentDraft(null);
+    setCommentDraftBody("");
+    setCommentError(null);
+    void prepareZoomImages();
+  }, [currentPage, prepareZoomImages]);
+
+  useEffect(() => {
+    if (!commentMode) {
+      suppressPageFlipRef.current = false;
+      setCommentDraft(null);
+      setCommentDraftBody("");
+      setCommentError(null);
+    }
+  }, [commentMode]);
 
   useEffect(() => {
     if (!magnifierOpen) return;
@@ -539,12 +886,32 @@ export default function FoldingBookViewer({
 
   const beginGesture = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("[data-book-comment-ui]")
+      ) {
+        return;
+      }
+      if (
+        commentMode &&
+        target instanceof Element &&
+        target.closest("[data-book-page-face]")
+      ) {
+        suppressPageFlipRef.current = true;
+        return;
+      }
       if (
         zoomClosingRef.current ||
         !event.isPrimary ||
         (event.pointerType === "mouse" && event.button !== 0)
       ) {
         return;
+      }
+
+      void prepareZoomImages();
+      if (hasComments && !commentMode) {
+        setCommentsHeldHidden(true);
       }
 
       const now = window.performance.now();
@@ -589,7 +956,16 @@ export default function FoldingBookViewer({
         moved: false,
       };
     },
-    [clearTapTimer, panX, panY, stopZoomAnimations, zoomScale]
+    [
+      clearTapTimer,
+      commentMode,
+      hasComments,
+      panX,
+      panY,
+      prepareZoomImages,
+      stopZoomAnimations,
+      zoomScale,
+    ]
   );
 
   const schedulePageTurn = useCallback(
@@ -674,6 +1050,7 @@ export default function FoldingBookViewer({
 
       activeGestureRef.current = null;
       suppressPageFlipRef.current = false;
+      setCommentsHeldHidden(false);
 
       if (event.type === "pointercancel") {
         lastTapRef.current.time = 0;
@@ -777,7 +1154,7 @@ export default function FoldingBookViewer({
           magnifierOpen
             ? "is-magnified cursor-grab active:cursor-grabbing"
             : "cursor-default"
-        }`}
+        } ${foldShadowActive ? "is-page-folding" : ""}`}
         data-page={currentPage}
         data-zoomed={magnifierOpen ? "true" : "false"}
         onPointerDownCapture={beginGesture}
@@ -865,6 +1242,7 @@ export default function FoldingBookViewer({
                   const busy =
                     event.data === "user_fold" || event.data === "flipping";
                   pageFlipBusyRef.current = busy;
+                  setFoldShadowActive(event.data !== "read");
                   if (busy) clearTapTimer();
                 }}
                 onChangeOrientation={(event: FlipEvent<PageOrientation>) => {
@@ -876,7 +1254,26 @@ export default function FoldingBookViewer({
                     key={page.id}
                     page={page}
                     isCover={index === 0 || index === pages.length - 1}
+                    comments={commentsByPage.get(page.id) ?? []}
+                    commentsHidden={
+                      commentsHeldHidden ||
+                      zoomCommentsHidden ||
+                      magnifierOpen
+                    }
+                    commentMode={commentMode}
+                    canManageComments={canManageComments}
+                    activeDraft={commentDraft}
+                    draftBody={commentDraftBody}
+                    commentBusy={commentBusy}
+                    commentError={commentError}
                     onImageReady={() => handlePageImageReady(index)}
+                    onPlaceComment={placeComment}
+                    onDraftBodyChange={setCommentDraftBody}
+                    onSubmitDraft={() => void submitCommentDraft()}
+                    onCancelDraft={cancelCommentDraft}
+                    onDeleteComment={(commentId) =>
+                      void deleteComment(commentId)
+                    }
                   />
                 ))}
               </HTMLFlipBook>
@@ -888,24 +1285,10 @@ export default function FoldingBookViewer({
   );
 
   return (
-    <div className="flex w-full flex-col items-center">
+    <div className="flex h-full w-full items-center justify-center">
       {magnifierOpen && typeof document !== "undefined"
         ? createPortal(bookStage, document.body)
         : bookStage}
-
-      <div
-        className={`public-book-meta public-book-title item-title flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
-      >
-        <span className="max-w-[60vw] truncate">{book.title}</span>
-      </div>
-
-      {book.description && (
-        <div
-          className={`public-book-meta public-book-description item-description flex items-center gap-8 text-[18px] ${bookMotionClassName}`}
-        >
-          <span className="max-w-[60vw] truncate">{book.description}</span>
-        </div>
-      )}
     </div>
   );
 }

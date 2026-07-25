@@ -50,9 +50,12 @@ import AdminThreeDModelManager from "@/components/admin/AdminThreeDModelManager"
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { listPublishedThreeDModels } from "@/services/threeDModelRepository";
 import type { ThreeDModel } from "@/types/threeDModels";
+import ScrambleText from "@/components/navigation/ScrambleText";
 
 interface WatchStudioProps {
   onBack: () => void;
+  onNavigate: () => void;
+  onLogin: () => void;
 }
 
 const DEFAULT_WATCH_URL = `${import.meta.env.BASE_URL}models/watch-v1.glb`;
@@ -67,9 +70,11 @@ type ModelMotion = "outside" | "entering" | "visible" | "leaving";
 const MODEL_SHRINK_DURATION = 700;
 const MODEL_GROW_DURATION = 940;
 const MODEL_CATALOG_CACHE_DURATION = 12 * 60 * 1000;
+const NAV_IDLE_DELAY = 1400;
+const NAV_REVEAL_THRESHOLD = 44;
 
 const RENDER_MODES: Array<{ id: RenderMode; label: string }> = [
-  { id: "pbr", label: "PBR" },
+  { id: "pbr", label: "RENDER" },
   { id: "arctic", label: "ARCTIC" },
   { id: "pen", label: "PEN" },
 ];
@@ -174,6 +179,189 @@ const watchStudioStyles = `
   touch-action: none;
 }
 
+.watch-primary-nav-shell {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left));
+  top: max(12px, env(safe-area-inset-top));
+  z-index: 280;
+  transform: translate3d(0, 0, 0);
+  transition: transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1);
+  will-change: transform;
+}
+
+.watch-primary-nav-shell.is-hidden {
+  transform: translate3d(calc(-100% - 18px), 0, 0);
+}
+
+.watch-primary-nav {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(34px, 5vw, 48px);
+  align-items: start;
+  gap: clamp(1px, 0.6vw, 7px);
+  max-width: calc(100vw - 24px - env(safe-area-inset-left));
+}
+
+.watch-primary-nav-column {
+  position: relative;
+  width: 100%;
+  height: clamp(96px, 16dvh, 138px);
+  border: 0;
+  outline: none;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.watch-primary-nav-column > span {
+  position: absolute;
+  left: auto;
+  right: 50%;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transform: rotate(-90deg);
+  transform-origin: 100% 50%;
+  color: rgb(0 0 0 / 0.42);
+  font-size: clamp(11px, 1.5vw, 13px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  transition:
+    color 480ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.watch-primary-nav-column:hover > span,
+.watch-primary-nav-column:focus-visible > span {
+  color: rgb(0 0 0 / 0.72);
+  transform: rotate(-90deg) scale(1.08);
+}
+
+.watch-primary-nav-column:focus-visible > span {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.watch-primary-nav-column.is-active > span {
+  color: black;
+  text-decoration: none;
+}
+
+.watch-info-toggle {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  top: max(18px, env(safe-area-inset-top));
+  z-index: 285;
+  border: 0;
+  padding: 8px 0;
+  background: transparent;
+  color: rgb(0 0 0 / 0.44);
+  font-size: clamp(11px, 1.5vw, 13px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  transition:
+    color 240ms ease,
+    opacity 420ms ease,
+    transform 640ms cubic-bezier(0.22, 0.88, 0.3, 1);
+}
+
+.watch-info-toggle:hover,
+.watch-info-toggle:focus-visible,
+.watch-info-toggle.is-active {
+  color: black;
+}
+
+.watch-info-toggle.is-nav-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(130%, 0, 0);
+}
+
+.watch-info-toggle.is-panel-open {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(130%, 0, 0);
+}
+
+.watch-nav-reveal-tab {
+  --watch-tab-drag: 0px;
+  position: fixed;
+  left: 0;
+  top: max(20px, env(safe-area-inset-top));
+  z-index: 290;
+  display: flex;
+  width: 34px;
+  height: 62px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0 18px 18px 0;
+  padding: 0 4px 0 0;
+  background: rgb(207 207 207 / 0.96);
+  color: rgb(0 0 0 / 0.66);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 0.08);
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  transform: translate3d(calc(var(--watch-tab-drag) - 38px), 0, 0);
+  transition:
+    transform 600ms cubic-bezier(0.22, 0.88, 0.3, 1),
+    opacity 260ms ease;
+  will-change: transform;
+}
+
+.watch-nav-reveal-tab.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate3d(calc(var(--watch-tab-drag) - 5px), 0, 0);
+}
+
+.watch-nav-reveal-tab.is-dragging {
+  transition: opacity 260ms ease;
+}
+
+.watch-nav-reveal-tab > span {
+  display: block;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1;
+  transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.watch-nav-reveal-tab:hover > span,
+.watch-nav-reveal-tab:focus-visible > span {
+  transform: translateX(3px);
+}
+
+@media (max-width: 380px), (max-height: 700px) {
+  .watch-primary-nav-shell {
+    top: max(8px, env(safe-area-inset-top));
+    left: max(7px, env(safe-area-inset-left));
+  }
+
+  .watch-primary-nav {
+    grid-auto-columns: 31px;
+    gap: 0;
+    max-width: calc(100vw - 14px);
+  }
+
+  .watch-primary-nav-column {
+    height: clamp(76px, 20dvh, 104px);
+  }
+
+  .watch-info-toggle {
+    right: max(10px, env(safe-area-inset-right));
+    top: max(8px, env(safe-area-inset-top));
+  }
+
+  .watch-nav-reveal-tab {
+    top: max(10px, env(safe-area-inset-top));
+    height: 54px;
+  }
+}
+
 .watch-studio-piece {
   transform-origin: 50% 50%;
   will-change: transform, opacity;
@@ -226,46 +414,136 @@ const watchStudioStyles = `
   pointer-events: none;
 }
 
-.watch-model-balloon {
-  transform: scale(0);
-  transform-origin: 36px 0;
+.watch-model-drawer {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(72dvh, 720px);
+  transform: translate3d(0, 104%, 0);
   opacity: 0;
-  filter: blur(10px);
+  background: rgb(207 207 207);
   pointer-events: none;
   transition:
-    transform 520ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    opacity 300ms ease,
-    filter 420ms ease;
+    transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1),
+    opacity 360ms ease;
+  will-change: transform, opacity;
 }
 
-.watch-model-balloon.is-open {
-  transform: scale(1);
+.watch-model-drawer.is-open {
+  transform: translate3d(0, 0, 0);
   opacity: 1;
-  filter: blur(0);
   pointer-events: auto;
 }
 
 .watch-model-list-item {
+  display: flex;
+  min-height: clamp(100px, 17dvh, 160px);
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: clamp(22px, 4vw, 46px);
+  background: transparent;
+  text-align: center;
   transform-origin: 50% 50%;
   transform: scale(0);
   opacity: 0;
   transition:
     transform 520ms cubic-bezier(0.22, 0.88, 0.3, 1),
     opacity 260ms ease;
-  transition-delay: calc(var(--model-index, 0) * 45ms);
+  transition-delay: calc(var(--model-index, 0) * 55ms);
 }
 
-.watch-model-balloon.is-open .watch-model-list-item {
+.watch-model-drawer.is-open .watch-model-list-item {
   transform: scale(1);
   opacity: 1;
+}
+
+.watch-model-list-item > span {
+  width: min(680px, 88vw);
+}
+
+.watch-model-list-item:hover > span,
+.watch-model-list-item:focus-visible > span {
+  transform: scale(1.025);
+}
+
+.watch-model-list-item > span {
+  transition:
+    color 240ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.watch-info-drawer {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, calc(100vw - 18px));
+  transform: translate3d(104%, 0, 0);
+  opacity: 0;
+  background: rgb(207 207 207);
+  pointer-events: none;
+  transition:
+    transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1),
+    opacity 360ms ease;
+  will-change: transform, opacity;
+}
+
+.watch-info-drawer.is-open {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.watch-info-piece {
+  transform-origin: 50% 50%;
+  transform: scale(0.72);
+  opacity: 0;
+  transition:
+    transform 560ms cubic-bezier(0.22, 0.88, 0.3, 1),
+    opacity 280ms ease;
+  transition-delay: var(--info-delay, 0ms);
+}
+
+.watch-info-drawer.is-open .watch-info-piece {
+  transform: scale(1);
+  opacity: 1;
+}
+
+.watch-render-option {
+  border: 0;
+  padding: 8px 0;
+  background: transparent;
+  color: rgb(0 0 0 / 0.42);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  transition:
+    color 220ms ease,
+    transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.watch-render-option:hover,
+.watch-render-option:focus-visible {
+  color: rgb(0 0 0 / 0.76);
+  transform: scale(1.06);
+}
+
+.watch-render-option.is-active {
+  color: black;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .watch-studio,
   .watch-studio-piece,
   .watch-model-stage,
-  .watch-model-balloon,
-  .watch-model-list-item {
+  .watch-primary-nav-shell,
+  .watch-info-toggle,
+  .watch-nav-reveal-tab,
+  .watch-model-drawer,
+  .watch-model-list-item,
+  .watch-info-drawer,
+  .watch-info-piece {
     transition-duration: 1ms;
     animation-duration: 1ms !important;
     animation-delay: 0ms !important;
@@ -912,7 +1190,11 @@ function SceneReadySignal({
   return null;
 }
 
-export default function WatchStudio({ onBack }: WatchStudioProps) {
+export default function WatchStudio({
+  onBack,
+  onNavigate,
+  onLogin,
+}: WatchStudioProps) {
   const [entered, setEntered] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [catalogReady, setCatalogReady] = useState(false);
@@ -921,6 +1203,15 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   const [renderMode, setRenderMode] = useState<RenderMode>("pbr");
   const [managerOpen, setManagerOpen] = useState(false);
   const [modelListOpen, setModelListOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [navHidden, setNavHidden] = useState(false);
+  const [initialNavAutoHideDone, setInitialNavAutoHideDone] = useState(false);
+  const [navRevealDrag, setNavRevealDrag] = useState(0);
+  const [navRevealDragging, setNavRevealDragging] = useState(false);
+  const [navTransitionTarget, setNavTransitionTarget] = useState<
+    "library" | "other" | null
+  >(null);
+  const [activeNavId, setActiveNavId] = useState("models");
   const [modelMotion, setModelMotion] = useState<ModelMotion>("outside");
   const [modelGeometryReady, setModelGeometryReady] = useState(false);
   const [modelSceneReady, setModelSceneReady] = useState(false);
@@ -930,8 +1221,18 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   const pendingModelIdRef = useRef<string | null>(null);
   const modelSwitchTimerRef = useRef<number | null>(null);
   const modelVisibleTimerRef = useRef<number | null>(null);
+  const navIdleTimerRef = useRef<number | null>(null);
+  const navRevealDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+  } | null>(null);
+  const modelTapRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const loadingProgress = useProgress();
-  const { loading: authLoading, user, isAdmin } = useAdminSession();
+  const { isAdmin } = useAdminSession();
 
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? DEFAULT_MODEL;
@@ -939,6 +1240,43 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   const selectedEnvironmentUrl = environmentUrlFor(selectedModel);
   const modelReadinessKey = `${selectedModel.public_url}|${selectedEnvironmentUrl}`;
   const sceneMode = renderMode;
+  const canAutoHideNav =
+    entered &&
+    !leaving &&
+    modelMotion === "visible" &&
+    !managerOpen &&
+    !modelListOpen &&
+    !infoOpen &&
+    !initialNavAutoHideDone;
+
+  const clearNavIdleTimer = useCallback(() => {
+    if (navIdleTimerRef.current) {
+      window.clearTimeout(navIdleTimerRef.current);
+      navIdleTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleNavAutoHide = useCallback(() => {
+    clearNavIdleTimer();
+
+    if (!canAutoHideNav) {
+      return;
+    }
+
+    navIdleTimerRef.current = window.setTimeout(() => {
+      setNavRevealDrag(0);
+      setInitialNavAutoHideDone(true);
+      setNavHidden(true);
+      navIdleTimerRef.current = null;
+    }, NAV_IDLE_DELAY);
+  }, [canAutoHideNav, clearNavIdleTimer]);
+
+  const revealNavigation = useCallback(() => {
+    setNavRevealDrag(0);
+    setNavRevealDragging(false);
+    setNavHidden(false);
+    clearNavIdleTimer();
+  }, [clearNavIdleTimer]);
 
   const loadModels = useCallback(async (forceRefresh = false) => {
     setModelGeometryReady(false);
@@ -974,8 +1312,100 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
   }, [isAdmin]);
 
   useEffect(() => {
-    if (managerOpen) setModelListOpen(false);
+    if (managerOpen) {
+      setModelListOpen(false);
+      setInfoOpen(false);
+    }
   }, [managerOpen]);
+
+  useEffect(() => {
+    if (modelListOpen) setInfoOpen(false);
+  }, [modelListOpen]);
+
+  useEffect(() => {
+    scheduleNavAutoHide();
+
+    return clearNavIdleTimer;
+  }, [clearNavIdleTimer, scheduleNavAutoHide]);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+
+    const closeFromOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest("[data-watch-info-panel]") ||
+        target.closest("[data-watch-info-toggle]")
+      ) {
+        return;
+      }
+
+      setInfoOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeFromOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside, true);
+    };
+  }, [infoOpen]);
+
+  useEffect(() => {
+    const moveRevealTab = (event: PointerEvent) => {
+      const drag = navRevealDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      const distance = Math.min(
+        120,
+        Math.max(0, event.clientX - drag.startX)
+      );
+
+      if (distance >= NAV_REVEAL_THRESHOLD) {
+        navRevealDragRef.current = null;
+        revealNavigation();
+        return;
+      }
+
+      setNavRevealDrag(distance);
+    };
+
+    const finishRevealTab = (event: PointerEvent) => {
+      const drag = navRevealDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+
+      const distance = Math.min(
+        120,
+        Math.max(0, event.clientX - drag.startX)
+      );
+      navRevealDragRef.current = null;
+      setNavRevealDragging(false);
+
+      if (distance >= NAV_REVEAL_THRESHOLD || distance < 6) {
+        revealNavigation();
+        return;
+      }
+
+      setNavRevealDrag(0);
+    };
+
+    const cancelRevealTab = (event: PointerEvent) => {
+      const drag = navRevealDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      navRevealDragRef.current = null;
+      setNavRevealDragging(false);
+      setNavRevealDrag(0);
+    };
+
+    window.addEventListener("pointermove", moveRevealTab);
+    window.addEventListener("pointerup", finishRevealTab);
+    window.addEventListener("pointercancel", cancelRevealTab);
+
+    return () => {
+      window.removeEventListener("pointermove", moveRevealTab);
+      window.removeEventListener("pointerup", finishRevealTab);
+      window.removeEventListener("pointercancel", cancelRevealTab);
+    };
+  }, [revealNavigation]);
 
   useEffect(() => {
     return () => {
@@ -985,8 +1415,9 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       if (modelVisibleTimerRef.current) {
         window.clearTimeout(modelVisibleTimerRef.current);
       }
+      clearNavIdleTimer();
     };
-  }, []);
+  }, [clearNavIdleTimer]);
 
   useEffect(() => {
     let secondFrame = 0;
@@ -999,12 +1430,6 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       window.cancelAnimationFrame(secondFrame);
     };
   }, []);
-
-  const pieceClass = leaving
-    ? "is-leaving"
-    : entered
-      ? "is-entering"
-      : "is-visible";
 
   const modelMotionClass = `is-${modelMotion}`;
 
@@ -1098,22 +1523,291 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
     [modelMotion, selectedModel.id]
   );
 
-  const handleBack = () => {
+  const leaveTo = (
+    destination: () => void,
+    target: "library" | "other" = "other"
+  ) => {
     if (leaving) return;
+    setInfoOpen(false);
     setModelListOpen(false);
+    setManagerOpen(false);
+    setNavHidden(false);
+    setNavTransitionTarget(target);
     setModelMotion("leaving");
     setLeaving(true);
-    window.setTimeout(onBack, 900);
+    window.setTimeout(destination, 900);
   };
 
+  const handleBack = () => {
+    window.sessionStorage.setItem(
+      "gstudios:nav-continuity",
+      "models-to-library"
+    );
+    setActiveNavId("library");
+    leaveTo(onBack, "library");
+  };
+
+  const handleInfoToggle = () => {
+    setNavHidden(false);
+    setManagerOpen(false);
+    setModelListOpen(false);
+    setInfoOpen((open) => !open);
+  };
+
+  const handleNavRevealPointerDown = (
+    event: React.PointerEvent<HTMLButtonElement>
+  ) => {
+    if (!navHidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    navRevealDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+    };
+    setNavRevealDragging(true);
+  };
+
+  const handleModelPointerDown = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    if (
+      event.button !== 0 ||
+      managerOpen ||
+      modelListOpen ||
+      infoOpen ||
+      modelMotion !== "visible"
+    ) {
+      modelTapRef.current = null;
+      return;
+    }
+
+    modelTapRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  };
+
+  const handleModelPointerMove = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    const tap = modelTapRef.current;
+    if (!tap || tap.pointerId !== event.pointerId) return;
+
+    if (
+      Math.hypot(
+        event.clientX - tap.startX,
+        event.clientY - tap.startY
+      ) > 7
+    ) {
+      modelTapRef.current = null;
+    }
+  };
+
+  const handleModelPointerUp = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    const tap = modelTapRef.current;
+    modelTapRef.current = null;
+
+    if (!tap || tap.pointerId !== event.pointerId || navHidden) return;
+
+    clearNavIdleTimer();
+    setInitialNavAutoHideDone(true);
+    setNavHidden(true);
+  };
+
+  const primaryNavItems = [
+    {
+      id: "navigate",
+      label: "NAVIGATE",
+      action: () => leaveTo(onNavigate),
+      event: "navigation_click",
+      type: "navigation",
+      active: false,
+    },
+    {
+      id: "library",
+      label: "LIBRARY",
+      action: handleBack,
+      event: "navigation_click",
+      type: "navigation",
+      active: false,
+    },
+    {
+      id: "login",
+      label: "LOGIN",
+      action: () => leaveTo(onLogin),
+      event: "navigation_click",
+      type: "navigation",
+      active: false,
+    },
+    {
+      id: "models",
+      label: "MODELS",
+      action: () => {
+        const viewerAlreadyClear =
+          !managerOpen && !modelListOpen && !infoOpen;
+        setManagerOpen(false);
+        setModelListOpen(false);
+        setActiveNavId("models");
+        if (viewerAlreadyClear) {
+          clearNavIdleTimer();
+          setNavHidden(true);
+        }
+      },
+      event: "navigation_click",
+      type: "model",
+      active: activeNavId === "models" && !managerOpen && !modelListOpen,
+    },
+    {
+      id: "3d-library",
+      label: "3D LIBRARY",
+      action: () => {
+        setManagerOpen(false);
+        setModelListOpen((open) => !open);
+      },
+      event: "navigation_click",
+      type: "model",
+      active: modelListOpen && !managerOpen,
+    },
+    ...(isAdmin
+      ? [
+          {
+            id: "manage",
+            label: "MANAGE MODELS",
+            action: () => {
+              setModelListOpen(false);
+              setManagerOpen((open) => !open);
+            },
+            event: "navigation_click",
+            type: "interface",
+            active: managerOpen,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div
-      className={`watch-studio fixed inset-0 z-[200] overflow-hidden text-black ${
-        leaving ? "is-leaving" : entered ? "is-visible" : ""
-      }`}
-      style={{ backgroundColor: RENDER_BACKGROUNDS[sceneMode] }}
-    >
+    <>
       <style>{watchStudioStyles}</style>
+
+      <div
+        className={`watch-primary-nav-shell ${navHidden ? "is-hidden" : ""}`}
+        aria-hidden={navHidden}
+      >
+        <div className="watch-primary-nav">
+          {primaryNavItems.map((item, index) => {
+            const staysInLibrary =
+              item.id === "navigate" ||
+              item.id === "library" ||
+              item.id === "login" ||
+              item.id === "models";
+            const itemMotion =
+              leaving &&
+              (navTransitionTarget !== "library" || !staysInLibrary)
+                ? "is-leaving"
+                : "is-visible";
+
+            return (
+              <div
+                key={item.id}
+                className={`watch-studio-piece ${itemMotion}`}
+                style={
+                  {
+                    "--watch-delay": `${index * 70}ms`,
+                    "--watch-exit-delay": `${
+                      (primaryNavItems.length - index - 1) * 60
+                    }ms`,
+                  } as React.CSSProperties
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInfoOpen(false);
+                    item.action();
+                  }}
+                  disabled={leaving}
+                  tabIndex={navHidden ? -1 : undefined}
+                  aria-expanded={
+                    item.id === "3d-library"
+                      ? modelListOpen
+                      : item.id === "manage"
+                        ? managerOpen
+                        : undefined
+                  }
+                  aria-controls={
+                    item.id === "3d-library"
+                      ? "watch-model-library"
+                      : item.id === "manage"
+                        ? "watch-model-manager"
+                        : undefined
+                  }
+                  data-analytics-event={item.event}
+                  data-analytics-type={item.type}
+                  data-analytics-id={item.id}
+                  className={`watch-primary-nav-column disabled:pointer-events-none ${
+                    item.active ? "is-active" : ""
+                  }`}
+                >
+                  <span>
+                    {item.id === "login" ? (
+                      <ScrambleText text="LOGIN" />
+                    ) : (
+                      item.label
+                    )}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        data-watch-info-toggle
+        onClick={handleInfoToggle}
+        disabled={leaving}
+        tabIndex={navHidden ? -1 : undefined}
+        aria-expanded={infoOpen}
+        aria-controls="watch-model-info"
+        className={`watch-info-toggle ${
+          infoOpen ? "is-active is-panel-open" : ""
+        } ${navHidden ? "is-nav-hidden" : ""}`}
+      >
+        INFO
+      </button>
+
+      <button
+        type="button"
+        aria-label="Reveal navigation"
+        aria-hidden={!navHidden}
+        tabIndex={navHidden ? 0 : -1}
+        onClick={(event) => {
+          if (event.detail === 0) revealNavigation();
+        }}
+        onPointerDown={handleNavRevealPointerDown}
+        className={`watch-nav-reveal-tab ${
+          navHidden ? "is-visible" : ""
+        } ${navRevealDragging ? "is-dragging" : ""}`}
+        style={
+          {
+            "--watch-tab-drag": `${navRevealDrag}px`,
+          } as React.CSSProperties
+        }
+      >
+        <span aria-hidden="true">→</span>
+      </button>
+
+      <div
+        className={`watch-studio fixed inset-0 z-[200] overflow-hidden text-black ${
+          leaving ? "is-leaving" : entered ? "is-visible" : ""
+        }`}
+        style={{ backgroundColor: RENDER_BACKGROUNDS[sceneMode] }}
+      >
       <ModelLoadingOverlay
         key={`${selectedModel.public_url}-${selectedEnvironmentUrl}`}
         catalogReady={catalogReady}
@@ -1121,36 +1815,6 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         complete={modelAssetsComplete}
         onCompleted={handleModelFullyLoaded}
       />
-
-      <div className="fixed left-4 top-4 z-40 flex items-center gap-2 sm:left-6 sm:top-6">
-        <div
-          className={`watch-studio-piece ${pieceClass}`}
-          style={{ "--watch-delay": "0ms", "--watch-exit-delay": "240ms" } as React.CSSProperties}
-        >
-          <button
-            type="button"
-            onClick={handleBack}
-            className="flex h-12 items-center justify-center rounded-none border border-black/25 bg-transparent px-5 text-[12px] transition-transform hover:scale-105 active:scale-95"
-          >
-            ← BACK TO BOOK
-          </button>
-        </div>
-
-        <div
-          className={`watch-studio-piece ${pieceClass}`}
-          style={{ "--watch-delay": "70ms", "--watch-exit-delay": "180ms" } as React.CSSProperties}
-        >
-          <button
-            type="button"
-            onClick={() => setModelListOpen((open) => !open)}
-            aria-expanded={modelListOpen}
-            aria-controls="watch-model-library"
-            className="flex h-12 items-center justify-center rounded-none border border-black/25 bg-transparent px-5 text-[12px] transition-transform hover:scale-105 active:scale-95"
-          >
-            MODELS
-          </button>
-        </div>
-      </div>
 
       {modelListOpen && !managerOpen && (
         <button
@@ -1164,26 +1828,20 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
       <aside
         id="watch-model-library"
         aria-hidden={!modelListOpen || managerOpen}
-        className={`watch-model-balloon fixed left-4 top-[76px] z-[35] flex max-h-[72vh] w-[min(88vw,390px)] flex-col overflow-hidden rounded-[34px] border border-black/25 bg-white/95 p-5 shadow-[0_18px_65px_rgba(0,0,0,0.16)] backdrop-blur-xl sm:left-6 sm:top-[82px] ${
+        className={`watch-model-drawer fixed z-[65] flex flex-col overflow-hidden ${
           modelListOpen && !managerOpen ? "is-open" : ""
         }`}
       >
-        <div className="mb-4 flex items-start justify-between gap-5">
-          <div>
-            <p className="text-[12px] tracking-[0.18em] text-black/45">3D LIBRARY</p>
-            <h1 className="mt-1 text-[22px] font-normal">CHOOSE A MODEL</h1>
-          </div>
-          <button
-            type="button"
-            onClick={() => setModelListOpen(false)}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/25 bg-transparent text-[18px]"
-            aria-label="Close model list"
-          >
-            ×
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setModelListOpen(false)}
+          className="absolute right-5 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 active:scale-95 sm:right-8"
+          aria-label="Close model list"
+        >
+          ×
+        </button>
 
-        <div className="min-h-0 overflow-y-auto border-t border-black/15">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {models.map((model, index) => {
             const selected = model.id === selectedModel.id;
 
@@ -1194,21 +1852,20 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
                 onClick={() => handleModelSelect(model.id)}
                 onPointerEnter={() => preloadThreeDModelAssets(model)}
                 onFocus={() => preloadThreeDModelAssets(model)}
-                className={`watch-model-list-item grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-black/15 px-1 py-4 text-left transition-colors hover:bg-black/[0.035] ${
-                  selected ? "text-black" : "text-black/65"
+                className={`watch-model-list-item ${
+                  selected ? "text-black" : "text-black/52"
                 }`}
                 style={{ "--model-index": index } as React.CSSProperties}
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-[16px]">{model.name}</span>
+                  <span className="block text-[clamp(18px,2.8vw,30px)] leading-tight">
+                    {model.name}
+                  </span>
                   {model.description && (
-                    <span className="mt-1 block truncate text-[12px] text-black/50">
+                    <span className="mx-auto mt-2 block max-w-[58ch] text-[clamp(11px,1.4vw,15px)] leading-relaxed text-black/52">
                       {model.description}
                     </span>
                   )}
-                </span>
-                <span className="text-[14px]">
-                  {model.is_featured ? "*" : selected ? ">" : ""}
                 </span>
               </button>
             );
@@ -1217,23 +1874,83 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
 
       </aside>
 
-      {!authLoading && user && isAdmin && (
-        <div
-          className={`watch-studio-piece fixed right-4 top-4 z-20 sm:right-6 sm:top-6 ${pieceClass}`}
-          style={{ "--watch-delay": "80ms", "--watch-exit-delay": "180ms" } as React.CSSProperties}
+      <aside
+        id="watch-model-info"
+        data-watch-info-panel
+        aria-hidden={!infoOpen}
+        className={`watch-info-drawer fixed z-[75] flex flex-col overflow-hidden ${
+          infoOpen ? "is-open" : ""
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setInfoOpen(false)}
+          className="absolute right-14 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 active:scale-95 sm:right-16"
+          aria-label="Close model information"
         >
-          <button
-            type="button"
-            onClick={() => setManagerOpen((open) => !open)}
-            className="flex h-12 items-center justify-center rounded-none border border-black/25 bg-transparent px-5 text-[12px] transition-transform hover:scale-105 active:scale-95"
+          ×
+        </button>
+
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 py-20 text-center sm:px-12">
+          <div
+            className="watch-info-piece w-full"
+            style={{ "--info-delay": "80ms" } as React.CSSProperties}
           >
-            {managerOpen ? "CLOSE MANAGER" : "MANAGE MODELS"}
-          </button>
+            <p className="text-[clamp(19px,3vw,31px)] leading-tight text-black">
+              {selectedModel.name}
+            </p>
+          </div>
+
+          {selectedModel.description && (
+            <div
+              className="watch-info-piece mt-4 w-full"
+              style={{ "--info-delay": "145ms" } as React.CSSProperties}
+            >
+              <p className="mx-auto max-w-[38ch] text-[clamp(11px,1.4vw,15px)] leading-relaxed text-black/52">
+                {selectedModel.description}
+              </p>
+            </div>
+          )}
+
+          <nav
+            className="watch-info-piece mt-9 flex flex-wrap items-center justify-center gap-x-7 gap-y-2"
+            style={{ "--info-delay": "210ms" } as React.CSSProperties}
+            aria-label="3D renderer style"
+          >
+            {RENDER_MODES.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setRenderMode(mode.id)}
+                aria-pressed={renderMode === mode.id}
+                className={`watch-render-option ${
+                  renderMode === mode.id ? "is-active" : ""
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </nav>
+
+          {modelListNotice && (
+            <div
+              className="watch-info-piece mt-7 text-[9px] leading-relaxed text-black/45"
+              style={{ "--info-delay": "275ms" } as React.CSSProperties}
+            >
+              {modelListNotice}
+            </div>
+          )}
         </div>
-      )}
+      </aside>
 
       <div
         className={`watch-model-stage watch-studio-canvas absolute inset-0 ${modelMotionClass}`}
+        onPointerDown={handleModelPointerDown}
+        onPointerMove={handleModelPointerMove}
+        onPointerUp={handleModelPointerUp}
+        onPointerCancel={() => {
+          modelTapRef.current = null;
+        }}
       >
         <Canvas
           shadows={sceneMode !== "pen"}
@@ -1366,65 +2083,17 @@ export default function WatchStudio({ onBack }: WatchStudioProps) {
         </Canvas>
       </div>
 
-      {!managerOpen && (
-        <aside className="pointer-events-none fixed inset-x-0 bottom-4 z-20 flex justify-center px-4 sm:bottom-6">
-          <div className="pointer-events-auto flex w-full max-w-4xl flex-col items-center gap-3">
-            <div
-              className={`watch-studio-piece max-w-full text-center ${modelMotionClass}`}
-              style={{ "--watch-delay": "70ms", "--watch-exit-delay": "120ms" } as React.CSSProperties}
-            >
-              <p className="max-w-[78vw] truncate text-[12px] tracking-[0.08em] text-black">
-                {selectedModel.name.toUpperCase()}
-              </p>
-            </div>
-
-            {selectedModel.description && (
-              <div
-                className={`watch-studio-piece max-w-[min(78vw,620px)] text-center ${modelMotionClass}`}
-                style={{ "--watch-delay": "140ms", "--watch-exit-delay": "60ms" } as React.CSSProperties}
-              >
-                <p className="truncate text-[10px] tracking-[0.04em] text-black/50">
-                  {selectedModel.description}
-                </p>
-              </div>
-            )}
-
-            <nav
-              className={`watch-studio-piece flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[10px] tracking-[0.12em] text-black ${modelMotionClass}`}
-              style={{ "--watch-delay": "210ms", "--watch-exit-delay": "0ms" } as React.CSSProperties}
-              aria-label="3D renderer style"
-            >
-              {RENDER_MODES.map((mode) => (
-                <button
-                  key={mode.id}
-                  type="button"
-                  onClick={() => setRenderMode(mode.id)}
-                  aria-pressed={renderMode === mode.id}
-                  className={`py-1 outline-none transition-opacity focus-visible:underline focus-visible:underline-offset-4 ${
-                    renderMode === mode.id
-                      ? "animate-bounce decoration-1 opacity-100"
-                      : "opacity-45 hover:opacity-100"
-                  }`}
-                >
-                  {mode.label}
-                </button>
-              ))}
-            </nav>
-
-            {modelListNotice && (
-              <div className="text-center text-[9px] text-black/45">{modelListNotice}</div>
-            )}
-          </div>
-        </aside>
-      )}
-
       {managerOpen && isAdmin && (
-        <section className="fixed inset-x-3 bottom-3 top-20 z-30 flex overflow-hidden rounded-[28px] border border-black/20 bg-white/95 shadow-2xl backdrop-blur-xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:top-20 sm:w-[min(760px,calc(100vw-40px))]">
+        <section
+          id="watch-model-manager"
+          className="fixed inset-x-3 bottom-3 top-20 z-30 flex overflow-hidden rounded-[28px] border border-black/20 bg-white/95 shadow-2xl backdrop-blur-xl sm:inset-x-auto sm:bottom-5 sm:right-5 sm:top-20 sm:w-[min(760px,calc(100vw-40px))]"
+        >
           <AdminThreeDModelManager
             onModelsChanged={() => void loadModels(true)}
           />
         </section>
       )}
-    </div>
+      </div>
+    </>
   );
 }

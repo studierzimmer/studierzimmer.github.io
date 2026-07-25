@@ -38,6 +38,9 @@ import {
 interface AdminBookManagerProps {
   userEmail: string;
   onBack: () => void;
+  onNavigate: () => void;
+  onLibrary: () => void;
+  onModels: () => void;
   onSignOut: () => Promise<void>;
   embedded?: boolean;
   accountControlsReady?: boolean;
@@ -110,6 +113,135 @@ const accountMotionStyles = `
   opacity: 1;
 }
 
+.admin-integrated {
+  background: rgb(207 207 207);
+}
+
+.admin-integrated > header {
+  border-color: transparent !important;
+  background: rgb(207 207 207 / 0.96) !important;
+  backdrop-filter: blur(14px);
+}
+
+.admin-section-nav {
+  left: max(12px, env(safe-area-inset-left));
+  top: max(12px, env(safe-area-inset-top));
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(34px, 5vw, 48px);
+  align-items: start;
+  gap: clamp(1px, 0.6vw, 7px);
+}
+
+.admin-section-column {
+  position: relative;
+  width: 100%;
+  height: clamp(96px, 16dvh, 138px);
+  border: 0;
+  outline: none;
+  padding: 0;
+  background: transparent;
+}
+
+.admin-section-column > span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
+  white-space: nowrap;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: 50% 50%;
+  color: rgb(0 0 0 / 0.42);
+  font-size: clamp(11px, 1.5vw, 13px);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  transition:
+    color 240ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.admin-section-column:hover > span,
+.admin-section-column:focus-visible > span {
+  color: rgb(0 0 0 / 0.72);
+  transform: translate(-50%, -50%) rotate(-90deg) scale(1.08);
+}
+
+.admin-section-column.is-active > span {
+  color: black;
+}
+
+.admin-section-column.admin-section-start {
+  margin-left: clamp(9px, 1.5vw, 22px);
+}
+
+.admin-manager-content {
+  padding-top: clamp(70px, 10dvh, 96px);
+}
+
+.admin-section-surface {
+  min-height: calc(100dvh - 150px);
+  animation: admin-section-arrive 660ms cubic-bezier(0.22, 0.88, 0.3, 1) both;
+}
+
+.admin-section-surface aside,
+.admin-section-surface section,
+.admin-section-surface .admin-backend-panel {
+  animation: admin-section-piece-arrive 720ms cubic-bezier(0.22, 0.88, 0.3, 1) both;
+}
+
+.admin-section-surface section {
+  animation-delay: 70ms;
+}
+
+.admin-integrated article[class*="border-"],
+.admin-integrated section[class*="border-"],
+.admin-integrated aside[class*="border-"],
+.admin-integrated div[class*="border-"],
+.admin-integrated aside button[class*="border-b"] {
+  border-color: transparent !important;
+}
+
+@keyframes admin-section-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes admin-section-piece-arrive {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.97);
+  }
+  68% {
+    opacity: 1;
+    transform: translate3d(0, -2px, 0) scale(1.008);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (max-width: 380px), (max-height: 700px) {
+  .admin-section-nav {
+    top: max(8px, env(safe-area-inset-top));
+    left: max(7px, env(safe-area-inset-left));
+    grid-auto-columns: 31px;
+    gap: 0;
+  }
+
+  .admin-section-column {
+    height: clamp(76px, 20dvh, 104px);
+  }
+
+  .admin-manager-content {
+    padding-top: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .admin-account-item.is-entering {
     animation-duration: 1ms;
@@ -118,7 +250,10 @@ const accountMotionStyles = `
 
   .admin-account-letter,
   .admin-backend-letter,
-  .admin-backend-panel.is-entering {
+  .admin-backend-panel.is-entering,
+  .admin-section-surface,
+  .admin-section-surface aside,
+  .admin-section-surface section {
     animation-duration: 1ms !important;
     animation-delay: 0ms !important;
   }
@@ -143,10 +278,10 @@ function AnimatedBackendText({ text }: { text: string }) {
 }
 
 const inputClass =
-  "w-full border border-black/25 bg-transparent px-3 py-2 text-[15px] outline-none focus:border-black";
+  "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[15px] outline-none focus:border-black";
 
 const buttonClass =
-  "border border-black/40 px-3 py-2 text-[14px] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[14px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 
 function messageFrom(error: unknown): string {
   return error instanceof Error
@@ -162,7 +297,9 @@ function rgbChannel(value: number | undefined): number {
 
 export default function AdminBookManager({
   userEmail,
-  onBack,
+  onNavigate,
+  onLibrary,
+  onModels,
   onSignOut,
   embedded = false,
   accountControlsReady = true,
@@ -696,30 +833,16 @@ export default function AdminBookManager({
     };
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-y-auto bg-white text-black">
+    <div className="admin-integrated fixed inset-0 z-[100] overflow-y-auto text-black">
       <style>{accountMotionStyles}</style>
 
       <header
         className={
           embedded
             ? "sticky top-0 z-10 flex min-h-[72px] items-start justify-end bg-white px-4 pt-4 sm:min-h-[88px] sm:px-6 sm:pt-6"
-            : "sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 border-b border-black/20 bg-white px-5 py-4 md:px-8"
+            : "sticky top-0 z-10 flex flex-wrap items-center justify-end gap-4 bg-white px-5 py-4 md:px-8"
         }
       >
-        {!embedded && (
-          <div className="flex items-center gap-5 text-[15px]">
-            <button
-              type="button"
-              onClick={onBack}
-              className="transition-transform hover:scale-110 active:scale-110"
-            >
-              ← BACK
-            </button>
-
-            <span>BOOK BACKEND</span>
-          </div>
-        )}
-
         <div className="flex h-12 items-center gap-4 text-[13px]">
           <span
             aria-label={userEmail}
@@ -745,45 +868,83 @@ export default function AdminBookManager({
         </div>
       </header>
 
-      <nav className="sticky top-[72px] z-10 flex flex-wrap justify-center gap-2 border-b border-black/15 bg-white px-4 py-2 sm:top-[88px]">
+      <nav
+        className="admin-section-nav fixed z-30"
+        aria-label="Admin sections"
+      >
+        <button
+          type="button"
+          onClick={onNavigate}
+          className="admin-section-column"
+        >
+          <span>NAVIGATE</span>
+        </button>
+        <button
+          type="button"
+          onClick={onLibrary}
+          className="admin-section-column"
+        >
+          <span>LIBRARY</span>
+        </button>
+        <button
+          type="button"
+          className="admin-section-column"
+        >
+          <span>LOGIN</span>
+        </button>
+        <button
+          type="button"
+          onClick={onModels}
+          className="admin-section-column"
+        >
+          <span>MODELS</span>
+        </button>
         <button
           type="button"
           onClick={() => setManagerSection("books")}
-          className={`${buttonClass} ${
-            managerSection === "books" ? "bg-black text-white" : ""
+          aria-current={managerSection === "books" ? "page" : undefined}
+          className={`admin-section-column admin-section-start ${
+            managerSection === "books" ? "is-active" : ""
           }`}
         >
-          BOOKS
+          <span>BOOKS</span>
         </button>
         <button
           type="button"
           onClick={() => setManagerSection("models")}
-          className={`${buttonClass} ${
-            managerSection === "models" ? "bg-black text-white" : ""
+          aria-current={managerSection === "models" ? "page" : undefined}
+          className={`admin-section-column ${
+            managerSection === "models" ? "is-active" : ""
           }`}
         >
-          3D MODELS
+          <span>3D DATA</span>
         </button>
         <button
           type="button"
           onClick={() => setManagerSection("sections")}
-          className={`${buttonClass} ${
-            managerSection === "sections" ? "bg-black text-white" : ""
+          aria-current={managerSection === "sections" ? "page" : undefined}
+          className={`admin-section-column ${
+            managerSection === "sections" ? "is-active" : ""
           }`}
         >
-          ARCHIVE SECTIONS
+          <span>ARCHIVE</span>
         </button>
         <button
           type="button"
           onClick={() => setManagerSection("info")}
-          className={`${buttonClass} ${
-            managerSection === "info" ? "bg-black text-white" : ""
+          aria-current={managerSection === "info" ? "page" : undefined}
+          className={`admin-section-column ${
+            managerSection === "info" ? "is-active" : ""
           }`}
         >
-          INFO
+          <span>INFO</span>
         </button>
       </nav>
 
+      <div
+        key={managerSection}
+        className="admin-manager-content admin-section-surface"
+      >
       {managerSection === "models" ? (
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminThreeDModelManager />
@@ -1400,6 +1561,7 @@ export default function AdminBookManager({
         </section>
       </main>
       )}
+      </div>
     </div>
   );
 }

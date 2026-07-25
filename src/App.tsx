@@ -14,7 +14,12 @@ import {
 } from "react-router-dom";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Index from "./pages/Index";
-import { readBookSession } from "@/components/books/bookSession";
+import {
+  BOOK_INDEX_RETURN_KEY,
+  BOOK_INTRO_RETURN_KEY,
+  readBookSession,
+} from "@/components/books/bookSession";
+import AnalyticsConsent from "@/components/privacy/AnalyticsConsent";
 
 const AdminPortal = lazy(() => import("@/components/admin/AdminPortal"));
 const Menu = lazy(() => import("./pages/Archive"));
@@ -27,8 +32,29 @@ const queryClient = new QueryClient();
 
 const AdminRoute = () => {
   const navigate = useNavigate();
+  const navigateToOceanIntro = () => {
+    window.sessionStorage.setItem(BOOK_INDEX_RETURN_KEY, "true");
+    window.sessionStorage.setItem(BOOK_INTRO_RETURN_KEY, "true");
+    window.sessionStorage.removeItem("revealDone");
+    window.sessionStorage.removeItem("returnFromExample");
+    navigate("/");
+  };
 
-  return <AdminPortal onBack={() => navigate("/")} />;
+  return (
+    <AdminPortal
+      onBack={() => navigate("/")}
+      onNavigate={navigateToOceanIntro}
+      onLibrary={() => {
+        const bookSession = readBookSession();
+        navigate(
+          bookSession
+            ? `/book/${encodeURIComponent(bookSession.slug)}`
+            : "/books"
+        );
+      }}
+      onModels={() => navigate("/3d")}
+    />
+  );
 };
 
 const PublicBooksRoute = () => {
@@ -55,6 +81,8 @@ const WatchRoute = () => {
 
   return (
     <WatchStudio
+      onNavigate={() => navigate("/")}
+      onLogin={() => navigate("/login")}
       onBack={() => {
         const bookSession = readBookSession();
 
@@ -80,6 +108,7 @@ const AppViewport = () => {
     >
       <Toaster />
       <Sonner />
+      <AnalyticsConsent />
 
       <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
         <Routes>
