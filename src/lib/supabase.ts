@@ -16,6 +16,7 @@ if (!supabaseUrl || !supabasePublishableKey) {
 
 export const BOOK_BUCKET = "book-pages";
 export const MODEL_BUCKET = "models-3d";
+export const CHARACTER_BUCKET = "characters-3d";
 
 export const supabase = createClient(
   supabaseUrl,

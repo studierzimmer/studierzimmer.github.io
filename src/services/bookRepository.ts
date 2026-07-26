@@ -49,6 +49,23 @@ function publicUrlFor(
   return data.publicUrl;
 }
 
+export function bookPagePreviewUrl(
+  storagePath: string
+): string {
+  const { data } = supabase.storage
+    .from(BOOK_BUCKET)
+    .getPublicUrl(storagePath, {
+      transform: {
+        width: 720,
+        height: 720,
+        resize: "contain",
+        quality: 72,
+      },
+    });
+
+  return data.publicUrl;
+}
+
 function mapPage(
   row: Omit<BookPage, "public_url">
 ): BookPage {

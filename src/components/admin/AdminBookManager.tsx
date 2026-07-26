@@ -14,6 +14,7 @@ import type {
   BookPage,
 } from "@/types/books";
 import AdminThreeDModelManager from "@/components/admin/AdminThreeDModelManager";
+import AdminCharacterManager from "@/components/admin/AdminCharacterManager";
 import AdminArchiveSectionManager from "@/components/admin/AdminArchiveSectionManager";
 import AdminAnalyticsInfo from "@/components/admin/AdminAnalyticsInfo";
 import BookBackgroundColorPicker from "@/components/admin/BookBackgroundColorPicker";
@@ -114,12 +115,12 @@ const accountMotionStyles = `
 }
 
 .admin-integrated {
-  background: rgb(207 207 207);
+  background: rgb(255 255 255);
 }
 
 .admin-integrated > header {
   border-color: transparent !important;
-  background: rgb(207 207 207 / 0.96) !important;
+  background: rgb(255 255 255 / 0.96) !important;
   backdrop-filter: blur(14px);
 }
 
@@ -143,14 +144,21 @@ const accountMotionStyles = `
   background: transparent;
 }
 
+.admin-section-placeholder {
+  width: 100%;
+  height: 1px;
+  pointer-events: none;
+}
+
 .admin-section-column > span {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: auto;
+  right: 50%;
+  top: 0;
   display: inline-flex;
   white-space: nowrap;
-  transform: translate(-50%, -50%) rotate(-90deg);
-  transform-origin: 50% 50%;
+  transform: rotate(-90deg);
+  transform-origin: 100% 50%;
   color: rgb(0 0 0 / 0.42);
   font-size: clamp(11px, 1.5vw, 13px);
   font-weight: 400;
@@ -163,7 +171,7 @@ const accountMotionStyles = `
 .admin-section-column:hover > span,
 .admin-section-column:focus-visible > span {
   color: rgb(0 0 0 / 0.72);
-  transform: translate(-50%, -50%) rotate(-90deg) scale(1.08);
+  transform: rotate(-90deg) scale(1.08);
 }
 
 .admin-section-column.is-active > span {
@@ -309,7 +317,7 @@ export default function AdminBookManager({
   );
   const [books, setBooks] = useState<Book[]>([]);
   const [managerSection, setManagerSection] = useState<
-    "books" | "models" | "sections" | "info"
+    "books" | "models" | "characters" | "sections" | "info"
   >("books");
   const [archiveSections, setArchiveSections] = useState<ArchiveSection[]>(
     DEFAULT_ARCHIVE_SECTIONS
@@ -869,36 +877,49 @@ export default function AdminBookManager({
       </header>
 
       <nav
-        className="admin-section-nav fixed z-30"
+        className={`admin-section-nav fixed z-30 ${
+          embedded ? "is-embedded" : ""
+        }`}
         aria-label="Admin sections"
       >
-        <button
-          type="button"
-          onClick={onNavigate}
-          className="admin-section-column"
-        >
-          <span>NAVIGATE</span>
-        </button>
-        <button
-          type="button"
-          onClick={onLibrary}
-          className="admin-section-column"
-        >
-          <span>LIBRARY</span>
-        </button>
-        <button
-          type="button"
-          className="admin-section-column"
-        >
-          <span>LOGIN</span>
-        </button>
-        <button
-          type="button"
-          onClick={onModels}
-          className="admin-section-column"
-        >
-          <span>MODELS</span>
-        </button>
+        {embedded ? (
+          <>
+            <span className="admin-section-placeholder" aria-hidden="true" />
+            <span className="admin-section-placeholder" aria-hidden="true" />
+            <span className="admin-section-placeholder" aria-hidden="true" />
+            <span className="admin-section-placeholder" aria-hidden="true" />
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onNavigate}
+              className="admin-section-column"
+            >
+              <span>NAVIGATE</span>
+            </button>
+            <button
+              type="button"
+              onClick={onLibrary}
+              className="admin-section-column"
+            >
+              <span>LIBRARY</span>
+            </button>
+            <button
+              type="button"
+              className="admin-section-column"
+            >
+              <span>LOGIN</span>
+            </button>
+            <button
+              type="button"
+              onClick={onModels}
+              className="admin-section-column"
+            >
+              <span>MODELS</span>
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={() => setManagerSection("books")}
@@ -918,6 +939,16 @@ export default function AdminBookManager({
           }`}
         >
           <span>3D DATA</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setManagerSection("characters")}
+          aria-current={managerSection === "characters" ? "page" : undefined}
+          className={`admin-section-column ${
+            managerSection === "characters" ? "is-active" : ""
+          }`}
+        >
+          <span>CHARACTERS</span>
         </button>
         <button
           type="button"
@@ -949,6 +980,8 @@ export default function AdminBookManager({
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminThreeDModelManager />
         </main>
+      ) : managerSection === "characters" ? (
+        <AdminCharacterManager />
       ) : managerSection === "sections" ? (
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminArchiveSectionManager onSectionsChanged={setArchiveSections} />

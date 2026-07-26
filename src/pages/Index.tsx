@@ -13,7 +13,9 @@ import LoadingLogo from "@/components/LoadingLogo";
 import SkyOceanBackground from "@/components/SkyOceanBackground";
 import { listPublishedBooks } from "@/services/bookRepository";
 import { listVisibleArchiveSections } from "@/services/archiveSectionRepository";
+import { listPublishedCharacters } from "@/services/characterRepository";
 import type { Book } from "@/types/books";
+import type { Character3D } from "@/types/characters3d";
 import {
   DEFAULT_ARCHIVE_SECTIONS,
   type ArchiveSection,
@@ -373,6 +375,7 @@ const STORAGE_KEYS = {
   snapshot: "listSnapshot",
   listScroll: "listScroll",
   exploreMode: "exploreMode",
+  selectedCharacter: "selectedOceanCharacter",
 };
 
 type Stage = "intro" | "main" | "list" | "exiting";
@@ -633,6 +636,20 @@ const Index = () => {
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [exploreMode, setExploreMode] = useState<boolean>(initialExploreMode);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const [characterSelectorOpen, setCharacterSelectorOpen] = useState(false);
+  const [characters, setCharacters] = useState<Character3D[]>([]);
+  const [charactersLoading, setCharactersLoading] = useState(false);
+  const [charactersError, setCharactersError] = useState<string | null>(null);
+  const [selectedCharacterId, setSelectedCharacterId] = useState(
+    () => sessionStorage.getItem(STORAGE_KEYS.selectedCharacter) ?? ""
+  );
+  const [characterSelectionVersion, setCharacterSelectionVersion] = useState(0);
+  const [characterLoadState, setCharacterLoadState] = useState<{
+    id: string;
+    percent: number;
+    ready: boolean;
+    error?: string;
+  } | null>(null);
   const initiallyArchiveOpen =
     initialStage === "list" || Boolean(initialActiveButton) || initialSearchOpen;
   const [archiveControlsMounted, setArchiveControlsMounted] = useState(
@@ -785,8 +802,104 @@ const Index = () => {
     if (!exploreMode) {
       setSpotifyOpen(false);
       setSpotifyPlayerOpen(false);
+      setCharacterSelectorOpen(false);
     }
   }, [exploreMode]);
+
+  const loadCharacters = useCallback(async () => {
+    setCharactersLoading(true);
+    setCharactersError(null);
+    try {
+      const nextCharacters = await listPublishedCharacters();
+      setCharacters(nextCharacters);
+      setSelectedCharacterId((current) => {
+        if (
+          current &&
+          nextCharacters.some((character) => character.id === current)
+        ) {
+          return current;
+        }
+        return (
+          nextCharacters.find((character) => character.is_featured)?.id ??
+          nextCharacters[0]?.id ??
+          ""
+        );
+      });
+    } catch (error) {
+      setCharactersError(
+        error instanceof Error ? error.message : "Unable to load characters."
+      );
+    } finally {
+      setCharactersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!exploreMode || characters.length > 0 || charactersLoading) return;
+    void loadCharacters();
+  }, [characters.length, charactersLoading, exploreMode, loadCharacters]);
+
+  const selectedCharacter = useMemo(
+    () =>
+      characters.find((character) => character.id === selectedCharacterId) ??
+      null,
+    [characters, selectedCharacterId]
+  );
+
+  useEffect(() => {
+    if (!exploreMode || !selectedCharacter) return;
+
+    const sendSelection = () => {
+      window.dispatchEvent(
+        new CustomEvent("ocean-character-select", {
+          detail: { character: selectedCharacter },
+        })
+      );
+    };
+
+    sendSelection();
+    window.addEventListener("ocean-character-player-ready", sendSelection);
+    return () => {
+      window.removeEventListener("ocean-character-player-ready", sendSelection);
+    };
+  }, [characterSelectionVersion, exploreMode, selectedCharacter]);
+
+  useEffect(() => {
+    const handleCharacterLoading = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          id: string;
+          percent: number;
+          ready: boolean;
+          error?: string;
+        }>
+      ).detail;
+      if (!detail?.id) return;
+      setCharacterLoadState(detail);
+    };
+
+    window.addEventListener(
+      "ocean-character-loading",
+      handleCharacterLoading
+    );
+    return () => {
+      window.removeEventListener(
+        "ocean-character-loading",
+        handleCharacterLoading
+      );
+    };
+  }, []);
+
+  const selectCharacter = useCallback((character: Character3D) => {
+    setSelectedCharacterId(character.id);
+    setCharacterSelectionVersion((version) => version + 1);
+    setCharacterLoadState({
+      id: character.id,
+      percent: 0,
+      ready: false,
+    });
+    sessionStorage.setItem(STORAGE_KEYS.selectedCharacter, character.id);
+  }, []);
 
   useEffect(() => {
     setSpotifyPlayerOpen(false, true);
@@ -1229,6 +1342,14 @@ const Index = () => {
     );
   }, []);
 
+  const sendRoll = useCallback((direction: number) => {
+    window.dispatchEvent(
+      new CustomEvent("explore-roll-step", {
+        detail: { direction },
+      })
+    );
+  }, []);
+
   const startVerticalMovement = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>, y: number) => {
       event.preventDefault();
@@ -1249,6 +1370,27 @@ const Index = () => {
       sendVertical(0);
     },
     [sendVertical]
+  );
+
+  const startRoll = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, direction: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      sendRoll(direction);
+    },
+    [sendRoll]
+  );
+
+  const stopRoll = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    []
   );
 
   useEffect(() => {
@@ -1932,6 +2074,151 @@ const Index = () => {
 
           {exploreMode && (
             <>
+              <AnimatePresence>
+                {characterSelectorOpen && (
+                  <motion.section
+                    key="ocean-character-selector"
+                    data-ocean-control
+                    aria-label="Choose a character"
+                    initial={{
+                      opacity: 0,
+                      scale: 0.45,
+                      y: 24,
+                      filter: "blur(8px)",
+                    }}
+                    animate={{
+                      opacity: 1,
+                      scale: 1,
+                      y: 0,
+                      filter: "blur(0px)",
+                    }}
+                    exit={{
+                      opacity: 0,
+                      scale: 0.45,
+                      y: 24,
+                      filter: "blur(8px)",
+                    }}
+                    transition={{
+                      scale: {
+                        type: "spring",
+                        stiffness: 410,
+                        damping: 24,
+                        mass: 0.74,
+                      },
+                      opacity: { duration: 0.2 },
+                      filter: { duration: 0.22 },
+                    }}
+                    className="fixed bottom-[178px] left-1/2 max-h-[min(48dvh,390px)] w-[min(88vw,430px)] -translate-x-1/2 overflow-y-auto rounded-[28px] bg-[#d7d7d7]/90 px-5 py-4 text-black shadow-[0_20px_70px_rgba(0,0,0,0.2)] backdrop-blur-xl no-scrollbar"
+                    style={{ zIndex: 24 }}
+                  >
+                    {charactersLoading ? (
+                      <p className="py-5 text-center text-[15px]">...</p>
+                    ) : charactersError ? (
+                      <button
+                        type="button"
+                        onClick={() => void loadCharacters()}
+                        className="w-full py-5 text-center text-[13px] text-black/65"
+                      >
+                        {charactersError} — RETRY
+                      </button>
+                    ) : (
+                      <div className="flex flex-col">
+                        {characters.map((character, index) => {
+                          const isSelected =
+                            character.id === selectedCharacterId;
+                          const isLoading =
+                            characterLoadState?.id === character.id &&
+                            !characterLoadState.ready &&
+                            !characterLoadState.error;
+                          const percent = isLoading
+                            ? characterLoadState.percent
+                            : isSelected
+                              ? 100
+                              : 0;
+
+                          return (
+                            <motion.button
+                              key={character.id}
+                              type="button"
+                              onClick={() => selectCharacter(character)}
+                              initial={{ opacity: 0, scale: 0.7 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              transition={{
+                                type: "spring",
+                                stiffness: 420,
+                                damping: 25,
+                                delay: index * 0.045,
+                              }}
+                              className={`origin-center rounded-[18px] px-4 py-3 text-left transition-colors ${
+                                isSelected
+                                  ? "bg-black text-white"
+                                  : "bg-transparent text-black/58 hover:text-black"
+                              }`}
+                            >
+                              <span className="block text-[15px] font-normal uppercase">
+                                {character.name}
+                              </span>
+                              {character.description && (
+                                <span
+                                  className={`mt-1 block text-[12px] leading-[1.35] ${
+                                    isSelected
+                                      ? "text-white/68"
+                                      : "text-black/48"
+                                  }`}
+                                >
+                                  {character.description}
+                                </span>
+                              )}
+                              {(isLoading ||
+                                characterLoadState?.error) &&
+                                characterLoadState?.id === character.id && (
+                                  <span className="mt-3 block">
+                                    <span
+                                      className={`mb-1 block text-[11px] ${
+                                        isSelected
+                                          ? "text-white/70"
+                                          : "text-black/50"
+                                      }`}
+                                    >
+                                      {characterLoadState.error ??
+                                        `${Math.round(percent)}%`}
+                                    </span>
+                                    {!characterLoadState.error && (
+                                      <span
+                                        className={`block h-[3px] overflow-hidden rounded-full ${
+                                          isSelected
+                                            ? "bg-white/20"
+                                            : "bg-black/10"
+                                        }`}
+                                      >
+                                        <motion.span
+                                          className={`block h-full origin-left rounded-full ${
+                                            isSelected
+                                              ? "bg-white"
+                                              : "bg-black"
+                                          }`}
+                                          animate={{
+                                            scaleX: percent / 100,
+                                          }}
+                                          transition={{
+                                            type: "spring",
+                                            stiffness: 180,
+                                            damping: 25,
+                                          }}
+                                        />
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                            </motion.button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </motion.section>
+                )}
+              </AnimatePresence>
+
               <button
                 type="button"
                 tabIndex={-1}
@@ -1941,7 +2228,7 @@ const Index = () => {
                 onPointerUp={stopVerticalMovement}
                 onPointerCancel={stopVerticalMovement}
                 onLostPointerCapture={() => sendVertical(0)}
-                className="fixed bottom-[42px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
+                className="fixed bottom-[57px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
                 style={{
                   left: "calc(50% - 92px)",
                   zIndex: 20,
@@ -1959,7 +2246,7 @@ const Index = () => {
                 role="button"
                 aria-label="Move player; tap the center to jump"
                 tabIndex={-1}
-                className="fixed left-1/2 bottom-[20px] -translate-x-1/2 w-[100px] h-[100px] rounded-full bg-white/5 backdrop-blur-sm flex items-center justify-center"
+                className="fixed left-1/2 bottom-[35px] -translate-x-1/2 w-[100px] h-[100px] rounded-full bg-white/5 backdrop-blur-sm flex items-center justify-center"
                 style={{
                   touchAction: "none",
                   zIndex: 20,
@@ -1985,13 +2272,33 @@ const Index = () => {
                 onPointerUp={stopVerticalMovement}
                 onPointerCancel={stopVerticalMovement}
                 onLostPointerCapture={() => sendVertical(0)}
-                className="fixed bottom-[42px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
+                className="fixed bottom-[57px] flex h-14 w-14 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm"
                 style={{
                   left: "calc(50% + 92px)",
                   zIndex: 20,
                 }}
               >
                 E ↑
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label={
+                  characterSelectorOpen
+                    ? "Close character selector"
+                    : "Choose character"
+                }
+                aria-expanded={characterSelectorOpen}
+                onClick={() =>
+                  setCharacterSelectorOpen((current) => !current)
+                }
+                className={`fixed bottom-[122px] flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95 ${
+                  characterSelectorOpen ? "scale-110" : ""
+                }`}
+                style={{ left: "calc(50% - 61px)", zIndex: 22 }}
+              >
+                P
               </button>
               <button
                 type="button"
@@ -2005,7 +2312,7 @@ const Index = () => {
                     return !open;
                   });
                 }}
-                className={`fixed bottom-[107px] left-[calc(50%+61px)] flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border-0 bg-white/5 text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95 ${
+                className={`fixed bottom-[122px] left-[calc(50%+61px)] flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border-0 bg-white/5 text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95 ${
                   spotifyOpen ? "scale-110" : ""
                 }`}
                 style={{ zIndex: 22 }}
@@ -2024,6 +2331,32 @@ const Index = () => {
                   <circle cx="6" cy="18" r="3" />
                   <circle cx="16" cy="16" r="3" />
                 </svg>
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label="Roll counter-clockwise (Z)"
+                onPointerDown={(event) => startRoll(event, -1)}
+                onPointerUp={stopRoll}
+                onPointerCancel={stopRoll}
+                className="fixed bottom-0 flex h-12 w-12 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95"
+                style={{ left: "calc(50% - 61px)", zIndex: 22 }}
+              >
+                Z
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                data-ocean-control
+                aria-label="Roll clockwise (X)"
+                onPointerDown={(event) => startRoll(event, 1)}
+                onPointerUp={stopRoll}
+                onPointerCancel={stopRoll}
+                className="fixed bottom-0 flex h-12 w-12 -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border-0 bg-white/5 text-[15px] font-normal text-white/55 shadow-sm backdrop-blur-sm transition-transform duration-300 hover:scale-110 hover:bg-white/10 active:scale-95"
+                style={{ left: "calc(50% + 61px)", zIndex: 22 }}
+              >
+                X
               </button>
             </>
           )}

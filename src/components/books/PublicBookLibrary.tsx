@@ -11,6 +11,7 @@ import { flushSync } from "react-dom";
 import type { Book, BookPage } from "@/types/books";
 import type { BookComment } from "@/types/bookComments";
 import {
+  bookPagePreviewUrl,
   listBookPages,
   listPublishedBooks,
 } from "@/services/bookRepository";
@@ -47,6 +48,16 @@ interface PublicBookLibraryProps {
 }
 
 type CenterMotion = "outside" | "entering" | "visible" | "leaving";
+
+type BookPreviewImage = {
+  src: string;
+  fallback: string;
+};
+
+type BookPreview = {
+  cover: BookPreviewImage | null;
+  lastPage: BookPreviewImage | null;
+};
 
 const BOOK_MOTION_DURATION = 1120;
 const BOOK_ENTER_HOLD_DURATION = 180;
@@ -128,6 +139,49 @@ const libraryStyles = `
   text-decoration: none;
 }
 
+.public-book-library-plus {
+  position: absolute;
+  left: 50%;
+  top: clamp(68px, 9dvh, 76px);
+  display: block;
+  pointer-events: none;
+  color: rgb(0 0 0 / 0.52);
+  font-size: clamp(13px, 1.7vw, 16px);
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+
+.public-book-library-plus.is-hidden {
+  animation: public-book-library-plus-arrive 520ms
+    cubic-bezier(0.4, 0, 0.2, 1) reverse both;
+}
+
+.public-book-library-plus.is-visible {
+  animation: public-book-library-plus-arrive 680ms
+    cubic-bezier(0.22, 0.88, 0.3, 1) 360ms both;
+}
+
+@keyframes public-book-library-plus-arrive {
+  0% {
+    opacity: 0;
+    transform: translate3d(-50%, -5px, 0) scale(0);
+  }
+  64% {
+    opacity: 1;
+    transform: translate3d(-50%, 1px, 0) scale(1.16);
+  }
+  82% {
+    transform: translate3d(-50%, 0, 0) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(-50%, 0, 0) scale(1);
+  }
+}
+
 .public-book-main {
   padding:
     calc(env(safe-area-inset-top) + clamp(14px, 2.5dvh, 32px))
@@ -150,12 +204,19 @@ const libraryStyles = `
   padding: clamp(8px, 1.6vw, 24px);
   contain: layout;
   isolation: isolate;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
 }
 
-.public-book-viewport .stf__parent,
+.public-book-viewport .stf__parent {
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+}
+
 .public-book-viewport .stf__wrapper {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
   transform-style: preserve-3d;
   -webkit-transform-style: preserve-3d;
 }
@@ -864,7 +925,7 @@ export default function PublicBookLibrary({
   const [bookComments, setBookComments] = useState<BookComment[]>([]);
   const [commentMode, setCommentMode] = useState(false);
   const [bookPreviews, setBookPreviews] = useState<
-    Record<string, { cover: string | null; lastPage: string | null }>
+    Record<string, BookPreview>
   >({});
   const [loadingBooks, setLoadingBooks] = useState(true);
   const [loadingPages, setLoadingPages] = useState(false);
@@ -929,15 +990,35 @@ export default function PublicBookLibrary({
     setBookPreviews((current) => ({
       ...current,
       [selectedBook.id]: {
-        cover: pages[0]?.public_url ?? null,
-        lastPage: pages[pages.length - 1]?.public_url ?? null,
+        cover: pages[0]
+          ? { src: pages[0].public_url, fallback: pages[0].public_url }
+          : null,
+        lastPage: pages[pages.length - 1]
+          ? {
+              src: pages[pages.length - 1].public_url,
+              fallback: pages[pages.length - 1].public_url,
+            }
+          : null,
       },
     }));
   }, [pages, selectedBook]);
 
   useEffect(() => {
-    if (!bookBalloonOpen || books.length === 0) return;
+    if (books.length === 0) return;
     let active = true;
+
+    const preloadImage = (preview: BookPreviewImage | null) => {
+      if (!preview) return;
+      const image = new Image();
+      image.decoding = "async";
+      image.onerror = () => {
+        if (preview.fallback === preview.src) return;
+        const fallbackImage = new Image();
+        fallbackImage.decoding = "async";
+        fallbackImage.src = preview.fallback;
+      };
+      image.src = preview.src;
+    };
 
     books.forEach((book) => {
       if (bookPreviews[book.id] || previewRequestsRef.current.has(book.id)) {
@@ -948,12 +1029,28 @@ export default function PublicBookLibrary({
       void listBookPages(book.id)
         .then((bookPages) => {
           if (!active) return;
+          const coverPage = bookPages[0];
+          const lastPage = bookPages[bookPages.length - 1];
+          const preview: BookPreview = {
+            cover: coverPage
+              ? {
+                  src: bookPagePreviewUrl(coverPage.storage_path),
+                  fallback: coverPage.public_url,
+                }
+              : null,
+            lastPage: lastPage
+              ? {
+                  src: bookPagePreviewUrl(lastPage.storage_path),
+                  fallback: lastPage.public_url,
+                }
+              : null,
+          };
+
+          preloadImage(preview.cover);
+          preloadImage(preview.lastPage);
           setBookPreviews((current) => ({
             ...current,
-            [book.id]: {
-              cover: bookPages[0]?.public_url ?? null,
-              lastPage: bookPages[bookPages.length - 1]?.public_url ?? null,
-            },
+            [book.id]: preview,
           }));
         })
         .catch(() => undefined)
@@ -965,7 +1062,7 @@ export default function PublicBookLibrary({
     return () => {
       active = false;
     };
-  }, [bookBalloonOpen, bookPreviews, books]);
+  }, [bookPreviews, books]);
 
   useEffect(() => {
     const nextColor = bookBackgroundColor(selectedBook);
@@ -1609,7 +1706,7 @@ export default function PublicBookLibrary({
   };
 
   const handleThreeD = async () => {
-    if (transitionBusyRef.current || loginMounted) {
+    if (transitionBusyRef.current) {
       return;
     }
 
@@ -1617,8 +1714,12 @@ export default function PublicBookLibrary({
     transitionBusyRef.current = true;
     setTransitionBusy(true);
     setBookBalloonOpen(false);
-    cancelViewerAnimation();
-    setViewerMotion("leaving");
+    if (loginMounted) {
+      setLoginMotion("leaving");
+    } else {
+      cancelViewerAnimation();
+      setViewerMotion("leaving");
+    }
 
     if (selectedBook) {
       writeBookSession(selectedBook.slug, viewerPage);
@@ -1762,7 +1863,11 @@ export default function PublicBookLibrary({
         />
       )}
 
-      <div className="public-book-nav fixed z-[170]">
+      <div
+        className={`public-book-nav fixed ${
+          loginMounted ? "z-[190]" : "z-[170]"
+        }`}
+      >
         <div
           className={`public-nav-item ${navMotionClass}`}
           style={
@@ -1774,16 +1879,16 @@ export default function PublicBookLibrary({
         >
           <button
             type="button"
-            onClick={() => void handleBack()}
+            onClick={() =>
+              void (loginMounted ? handleNavigateFromAdmin() : handleBack())
+            }
             disabled={transitionBusy}
             data-analytics-event="navigation_click"
             data-analytics-type="navigation"
             data-analytics-id="navigate"
             className="public-book-control-column disabled:pointer-events-none disabled:opacity-40"
-            aria-label={
-              loginMounted ? "Back to book" : "Navigate"
-            }
-            title={loginMounted ? "Back to book" : "Navigate"}
+            aria-label="Navigate"
+            title="Navigate"
           >
             <span>NAVIGATE</span>
           </button>
@@ -1802,9 +1907,13 @@ export default function PublicBookLibrary({
             type="button"
             onClick={() => {
               setActiveNavId("library");
+              if (loginMounted) {
+                void closeLogin();
+                return;
+              }
               setBookBalloonOpen((open) => !open);
             }}
-            disabled={loginMounted}
+            disabled={transitionBusy}
             data-analytics-event="navigation_click"
             data-analytics-type="navigation"
             data-analytics-id="library"
@@ -1821,6 +1930,18 @@ export default function PublicBookLibrary({
             title="Choose a book"
           >
             <span>LIBRARY</span>
+            <i
+              aria-hidden="true"
+              className={`public-book-library-plus ${
+                barVisible &&
+                !loginMounted &&
+                activeNavId === "library"
+                  ? "is-visible"
+                  : "is-hidden"
+              }`}
+            >
+              +
+            </i>
           </button>
         </div>
 
@@ -1866,7 +1987,7 @@ export default function PublicBookLibrary({
             onClick={() => void handleThreeD()}
             onPointerEnter={() => void preloadThreeDExperience()}
             onFocus={() => void preloadThreeDExperience()}
-            disabled={transitionBusy || loginMounted}
+            disabled={transitionBusy}
             data-analytics-event="model_open"
             data-analytics-type="model"
             data-analytics-id="models"
@@ -1878,7 +1999,7 @@ export default function PublicBookLibrary({
           </button>
         </div>
 
-        {isAdmin && (
+        {isAdmin && !loginMounted && (
           <div
             className={`public-nav-item ${navMotionClass}`}
             style={
@@ -1961,20 +2082,38 @@ export default function PublicBookLibrary({
                     <span>
                       {preview?.lastPage && (
                         <img
-                          src={preview.lastPage}
+                          src={preview.lastPage.src}
                           alt=""
                           draggable={false}
-                          loading="lazy"
+                          loading="eager"
+                          decoding="async"
+                          onError={(event) => {
+                            if (event.currentTarget.dataset.fallbackApplied) {
+                              return;
+                            }
+                            event.currentTarget.dataset.fallbackApplied = "true";
+                            event.currentTarget.src =
+                              preview.lastPage?.fallback ?? "";
+                          }}
                         />
                       )}
                     </span>
                     <span>
                       {preview?.cover && (
                         <img
-                          src={preview.cover}
+                          src={preview.cover.src}
                           alt=""
                           draggable={false}
-                          loading="lazy"
+                          loading="eager"
+                          decoding="async"
+                          onError={(event) => {
+                            if (event.currentTarget.dataset.fallbackApplied) {
+                              return;
+                            }
+                            event.currentTarget.dataset.fallbackApplied = "true";
+                            event.currentTarget.src =
+                              preview.cover?.fallback ?? "";
+                          }}
                         />
                       )}
                     </span>
@@ -2072,9 +2211,7 @@ export default function PublicBookLibrary({
               onBack={() => void closeLogin()}
               onNavigate={() => void handleNavigateFromAdmin()}
               onLibrary={() => void closeLogin()}
-              onModels={() => {
-                void closeLogin().then(() => handleThreeD());
-              }}
+              onModels={() => void handleThreeD()}
             />
           </Suspense>
         </div>

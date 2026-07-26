@@ -5,10 +5,13 @@ import React, {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Sky, useGLTF } from "@react-three/drei";
 import { SkeletonUtils, Water } from "three-stdlib";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { Character3D } from "@/types/characters3d";
 
 const keys: Record<string, boolean> = {};
 
@@ -46,6 +49,27 @@ const FIXED_BACKGROUND_COLOR = "#0b1e3a";
 const FIXED_WATER_COLOR = "#0a2a6a";
 const PLAYER_SESSION_KEY = "gstudios:ocean-player-transform";
 const causticsTimeUniform = { value: 0 };
+type LoadedCharacterAsset = {
+  scene: THREE.Group;
+  animations: THREE.AnimationClip[];
+};
+
+const characterAssetCache = new Map<string, LoadedCharacterAsset>();
+
+type ActiveCharacter = {
+  id: string;
+  scene: THREE.Group;
+  animations: THREE.AnimationClip[];
+  modelScale: number;
+  cameraDistance: number;
+  localCenter: THREE.Vector3;
+  collisionRadius: number;
+  renderedHeight: number;
+  renderedMinY: number;
+  renderedMaxY: number;
+  renderedWidth: number;
+  renderedLength: number;
+};
 
 type SurfacePulseKind = "click" | "dive" | "rise";
 
@@ -102,6 +126,7 @@ function readPlayerSessionTransform() {
   const fallback = {
     position: [0, PLAYER_GROUND_Y, 0] as [number, number, number],
     rotationY: Math.PI,
+    rotationZ: 0,
   };
 
   try {
@@ -110,6 +135,7 @@ function readPlayerSessionTransform() {
     const parsed = JSON.parse(stored) as {
       position?: unknown;
       rotationY?: unknown;
+      rotationZ?: unknown;
     };
     if (
       !Array.isArray(parsed.position) ||
@@ -134,6 +160,11 @@ function readPlayerSessionTransform() {
         Number(parsed.position[2]),
       ] as [number, number, number],
       rotationY: Number(parsed.rotationY),
+      rotationZ:
+        typeof parsed.rotationZ === "number" &&
+        Number.isFinite(parsed.rotationZ)
+          ? Number(parsed.rotationZ)
+          : 0,
     };
   } catch {
     return fallback;
@@ -149,6 +180,7 @@ function writePlayerSessionTransform(player: THREE.Object3D | null) {
       JSON.stringify({
         position: player.position.toArray(),
         rotationY: player.rotation.y,
+        rotationZ: player.rotation.z,
       })
     );
   } catch {
@@ -645,7 +677,7 @@ function Ocean() {
 
       material.transparent = true;
       material.depthTest = true;
-      material.depthWrite = true;
+      material.depthWrite = false;
       material.uniforms.rippleSampler = { value: rippleField.texture };
       material.uniforms.rippleCenter = { value: rippleField.center };
       material.uniforms.rippleWorldSize = { value: RIPPLE_WORLD_SIZE };
@@ -769,7 +801,6 @@ function Ocean() {
         .value as Float32Array;
       const strengths = material.uniforms.surfacePulseStrengths
         .value as Float32Array;
-
       for (let index = 0; index < MAX_SURFACE_PULSES; index += 1) {
         const pulse = surfacePulses[index];
         if (!pulse) {
@@ -789,6 +820,250 @@ function Ocean() {
   });
 
   return <primitive object={water} ref={ref} rotation-x={-Math.PI / 2} />;
+}
+
+const MAX_WAKE_PARTICLES = 120;
+
+function CharacterSurfaceWake() {
+  const spawnAccumulator = useRef(0);
+  const rippleAccumulator = useRef(0);
+  const nextParticle = useRef(0);
+  const particles = useRef(
+    Array.from({ length: MAX_WAKE_PARTICLES }, () => ({
+      position: new THREE.Vector3(),
+      velocity: new THREE.Vector3(),
+      life: 0,
+      totalLife: 1,
+      size: 1,
+    }))
+  );
+  const geometry = useMemo(() => {
+    const wakeGeometry = new THREE.BufferGeometry();
+    wakeGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(
+        new Float32Array(MAX_WAKE_PARTICLES * 3),
+        3
+      )
+    );
+    wakeGeometry.setAttribute(
+      "aSize",
+      new THREE.BufferAttribute(new Float32Array(MAX_WAKE_PARTICLES), 1)
+    );
+    wakeGeometry.setAttribute(
+      "aAlpha",
+      new THREE.BufferAttribute(new Float32Array(MAX_WAKE_PARTICLES), 1)
+    );
+    return wakeGeometry;
+  }, []);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        toneMapped: false,
+        uniforms: {},
+        vertexShader: `
+          attribute float aSize;
+          attribute float aAlpha;
+          varying float vAlpha;
+          void main() {
+            vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * viewPosition;
+            gl_PointSize = clamp(
+              aSize * (220.0 / max(1.0, -viewPosition.z)),
+              1.5,
+              20.0
+            );
+            vAlpha = aAlpha;
+          }
+        `,
+        fragmentShader: `
+          varying float vAlpha;
+          void main() {
+            vec2 point = gl_PointCoord - 0.5;
+            float distanceToCenter = length(point);
+            float foam = 1.0 - smoothstep(0.28, 0.5, distanceToCenter);
+            float rim = smoothstep(0.06, 0.34, distanceToCenter) *
+              (1.0 - smoothstep(0.34, 0.5, distanceToCenter));
+            float alpha = (foam * 0.72 + rim * 0.42) * vAlpha;
+            if (alpha < 0.01) discard;
+            gl_FragColor = vec4(
+              mix(vec3(0.68, 0.88, 0.96), vec3(1.0), foam),
+              alpha
+            );
+          }
+        `,
+      }),
+    []
+  );
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material]
+  );
+
+  useFrame((_, delta) => {
+    const player = playerRef.current;
+    const positionAttribute = geometry.getAttribute(
+      "position"
+    ) as THREE.BufferAttribute;
+    const sizeAttribute = geometry.getAttribute(
+      "aSize"
+    ) as THREE.BufferAttribute;
+    const alphaAttribute = geometry.getAttribute(
+      "aAlpha"
+    ) as THREE.BufferAttribute;
+
+    for (let index = 0; index < particles.current.length; index += 1) {
+      const particle = particles.current[index];
+      if (particle.life > 0) {
+        particle.life -= delta;
+        particle.position.addScaledVector(particle.velocity, delta);
+        particle.velocity.y -= delta * 7.5;
+        const progress = THREE.MathUtils.clamp(
+          particle.life / particle.totalLife,
+          0,
+          1
+        );
+        positionAttribute.setXYZ(
+          index,
+          particle.position.x,
+          particle.position.y,
+          particle.position.z
+        );
+        sizeAttribute.setX(index, particle.size * (1.18 - progress * 0.18));
+        alphaAttribute.setX(
+          index,
+          Math.sin(progress * Math.PI) * 0.82
+        );
+      } else {
+        alphaAttribute.setX(index, 0);
+      }
+    }
+
+    if (player) {
+      const minimumY =
+        player.position.y + Number(player.userData.renderedMinY ?? 0);
+      const maximumY =
+        player.position.y + Number(player.userData.renderedMaxY ?? 0);
+      const speed = Number(player.userData.speed) || 0;
+      const touchesWater =
+        minimumY < SEA_LEVEL_Y + 4 && maximumY > SEA_LEVEL_Y - 4;
+      const isShip = String(player.userData.characterId ?? "").includes(
+        "pirate-sailing-ship"
+      );
+      const heading = new THREE.Vector3(
+        Number(player.userData.headingX) || 0,
+        0,
+        Number(player.userData.headingZ) || 1
+      ).normalize();
+      const right = new THREE.Vector3(heading.z, 0, -heading.x);
+      const halfWidth = THREE.MathUtils.clamp(
+        Number(player.userData.renderedWidth) * (isShip ? 0.34 : 0.18),
+        2.5,
+        isShip ? 18 : 8
+      );
+      const halfLength = THREE.MathUtils.clamp(
+        Number(player.userData.renderedLength) * (isShip ? 0.38 : 0.18),
+        3,
+        isShip ? 42 : 10
+      );
+
+      if (touchesWater && speed > 1.2) {
+        spawnAccumulator.current += delta * Math.min(speed / 26, 2.4);
+        const spawnInterval = isShip ? 0.022 : 0.055;
+        while (spawnAccumulator.current >= spawnInterval) {
+          spawnAccumulator.current -= spawnInterval;
+          const particle =
+            particles.current[
+              nextParticle.current % particles.current.length
+            ];
+          nextParticle.current += 1;
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const fromBow = isShip && Math.random() < 0.68;
+          const longitudinal = fromBow
+            ? halfLength * (0.32 + Math.random() * 0.12)
+            : -halfLength * (0.2 + Math.random() * 0.22);
+          const lateral =
+            side *
+            halfWidth *
+            (fromBow ? 0.42 + Math.random() * 0.28 : Math.random() * 0.72);
+          particle.position
+            .copy(player.position)
+            .addScaledVector(heading, longitudinal)
+            .addScaledVector(right, lateral);
+          particle.position.y = SEA_LEVEL_Y + 0.3 + Math.random() * 0.55;
+          particle.velocity
+            .copy(right)
+            .multiplyScalar(side * (2.5 + Math.random() * (isShip ? 8 : 4)))
+            .addScaledVector(heading, fromBow ? -4 : -7)
+            .add(
+              new THREE.Vector3(
+                (Math.random() - 0.5) * 2,
+                3.5 + Math.random() * (isShip ? 7.5 : 4),
+                (Math.random() - 0.5) * 2
+              )
+            );
+          particle.totalLife = isShip
+            ? 0.55 + Math.random() * 0.55
+            : 0.4 + Math.random() * 0.35;
+          particle.life = particle.totalLife;
+          particle.size = isShip
+            ? 4.5 + Math.random() * 6
+            : 3 + Math.random() * 4;
+        }
+
+        rippleAccumulator.current += delta;
+        if (rippleAccumulator.current >= (isShip ? 0.09 : 0.16)) {
+          rippleAccumulator.current = 0;
+          const stern = player.position
+            .clone()
+            .addScaledVector(heading, -halfLength * 0.34);
+          rippleField.addRipple(
+            stern.x,
+            stern.z,
+            isShip ? 0.2 : 0.1,
+            isShip ? Math.max(9, halfWidth * 0.8) : 6
+          );
+          if (isShip) {
+            for (const side of [-1, 1]) {
+              const wakePoint = stern
+                .clone()
+                .addScaledVector(right, side * halfWidth * 0.48)
+                .addScaledVector(heading, -halfLength * 0.12);
+              rippleField.addRipple(
+                wakePoint.x,
+                wakePoint.z,
+                0.14,
+                Math.max(7, halfWidth * 0.46)
+              );
+            }
+          }
+        }
+      } else {
+        spawnAccumulator.current = 0;
+        rippleAccumulator.current = 0;
+      }
+    }
+
+    positionAttribute.needsUpdate = true;
+    sizeAttribute.needsUpdate = true;
+    alphaAttribute.needsUpdate = true;
+  });
+
+  return (
+    <points
+      geometry={geometry}
+      material={material}
+      frustumCulled={false}
+      renderOrder={4}
+    />
+  );
 }
 
 function SeaFloor() {
@@ -1343,17 +1618,144 @@ function Island() {
   return <primitive object={stableIsland} />;
 }
 
+function prepareCharacter(
+  character: Pick<
+    Character3D,
+    "id" | "model_scale" | "camera_distance"
+  >,
+  sourceScene: THREE.Group,
+  animations: THREE.AnimationClip[],
+  causticsMap: THREE.Texture
+): ActiveCharacter {
+  const clone = SkeletonUtils.clone(sourceScene) as THREE.Group;
+
+  clone.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+
+    const originalMaterials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
+    const clonedMaterials = originalMaterials.map((material) => {
+      const nextMaterial = material.clone();
+      if (nextMaterial instanceof THREE.MeshStandardMaterial) {
+        addUnderwaterCaustics(nextMaterial, causticsMap, {
+          includeRipple: false,
+          baseLight: 0,
+          causticsStrength: 0.78,
+          lightTint: [1, 0.98, 0.9],
+        });
+      }
+      nextMaterial.needsUpdate = true;
+      return nextMaterial;
+    });
+
+    child.material = Array.isArray(child.material)
+      ? clonedMaterials
+      : clonedMaterials[0];
+    child.castShadow = true;
+    child.receiveShadow = true;
+    child.frustumCulled = true;
+  });
+
+  clone.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(clone);
+  const scale = THREE.MathUtils.clamp(
+    Number(character.model_scale) || PLAYER_SCALE,
+    0.05,
+    100
+  );
+  const cameraDistance = THREE.MathUtils.clamp(
+    Number(character.camera_distance) || 70,
+    10,
+    500
+  );
+  const size = bounds.isEmpty()
+    ? new THREE.Vector3(1, 1.3, 1)
+    : bounds.getSize(new THREE.Vector3());
+  const center = bounds.isEmpty()
+    ? new THREE.Vector3(0, 0.65, 0)
+    : bounds.getCenter(new THREE.Vector3());
+  const renderedSize = size.multiplyScalar(scale);
+
+  return {
+    id: character.id,
+    scene: clone,
+    animations,
+    modelScale: scale,
+    cameraDistance,
+    localCenter: center.multiplyScalar(scale),
+    collisionRadius: THREE.MathUtils.clamp(
+      Math.max(renderedSize.x, renderedSize.z) * 0.42,
+      4,
+      25
+    ),
+    renderedHeight: Math.max(1, renderedSize.y),
+    renderedMinY: bounds.isEmpty() ? 0 : bounds.min.y * scale,
+    renderedMaxY: bounds.isEmpty() ? scale : bounds.max.y * scale,
+    renderedWidth: Math.max(1, renderedSize.x),
+    renderedLength: Math.max(1, renderedSize.z),
+  };
+}
+
+function publishCharacterLoading(
+  characterId: string,
+  percent: number,
+  options: { ready?: boolean; error?: string } = {}
+) {
+  window.dispatchEvent(
+    new CustomEvent("ocean-character-loading", {
+      detail: {
+        id: characterId,
+        percent: Math.round(THREE.MathUtils.clamp(percent, 0, 100)),
+        ready: options.ready ?? false,
+        error: options.error,
+      },
+    })
+  );
+}
+
 function Player() {
   const group = useRef<THREE.Group>(null!);
   const { camera } = useThree();
-  const { scene } = useGLTF(`${import.meta.env.BASE_URL}wolfy.glb`);
+  const wolfyUrl = `${import.meta.env.BASE_URL}wolfy.glb`;
+  const { scene, animations } = useGLTF(wolfyUrl);
   const causticsMap = useCausticsTexture();
-  const playerScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
+  const initialCharacter = useMemo(
+    () =>
+      prepareCharacter(
+        {
+          id: "bundled:wolfy",
+          model_scale: PLAYER_SCALE,
+          camera_distance: 70,
+        },
+        scene,
+        animations,
+        causticsMap
+      ),
+    [animations, causticsMap, scene]
+  );
+  const [activeCharacter, setActiveCharacter] =
+    useState<ActiveCharacter>(initialCharacter);
+  const activeCharacterRef = useRef(activeCharacter);
+  const loadGenerationRef = useRef(0);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const propellerActionRef = useRef<THREE.AnimationAction | null>(null);
+  const propellerRateRef = useRef(0.42);
+  const sailMeshesRef = useRef<THREE.Mesh[]>([]);
+  const sailInflationRef = useRef(0.14);
+  const flagMeshesRef = useRef<THREE.Mesh[]>([]);
+  const flagTrailRef = useRef(0.18);
+  const flagPhaseRef = useRef(0);
+  const engineTelemetryElapsed = useRef(0);
   const initialTransform = useMemo(() => readPlayerSessionTransform(), []);
+  const initialRoll =
+    Math.round(initialTransform.rotationZ / (Math.PI / 2)) *
+    (Math.PI / 2);
   const initiallyGrounded =
     Math.abs(initialTransform.position[1] - PLAYER_GROUND_Y) < 0.1;
   const joystick = useRef(new THREE.Vector3());
   const verticalControl = useRef(0);
+  const rollTarget = useRef(initialRoll);
   const touchSprint = useRef(false);
   const sprintBlend = useRef(0);
   const persistenceElapsed = useRef(0);
@@ -1367,56 +1769,173 @@ function Player() {
   const facing = useRef(new THREE.Vector3(0, 0, 1));
   const previousHeight = useRef(initialTransform.position[1]);
   const previousWaterSphereCenter = useRef<THREE.Vector3 | null>(null);
+  const waterDisplacementElapsed = useRef(0);
   const waterSphereCenter = useRef(new THREE.Vector3());
   const waterSphereOffset = useRef(new THREE.Vector3());
-  const waterSphereUp = useRef(new THREE.Vector3(0, 1, 0));
-  const waterProxy = useMemo(() => {
-    playerScene.updateWorldMatrix(true, true);
-    const bounds = new THREE.Box3().setFromObject(playerScene);
-    if (bounds.isEmpty()) {
-      return { localCenter: new THREE.Vector3(0, 0.65, 0), radius: 6.5 };
+  const waterProxy = useMemo(
+    () => ({
+      localCenter: activeCharacter.localCenter,
+      radius: activeCharacter.collisionRadius,
+    }),
+    [activeCharacter]
+  );
+
+  useEffect(() => {
+    activeCharacterRef.current = activeCharacter;
+    previousWaterSphereCenter.current = null;
+    window.dispatchEvent(
+      new CustomEvent("ocean-active-character-change", {
+        detail: { id: activeCharacter.id },
+      })
+    );
+
+    if (group.current) {
+      group.current.userData.cameraDistance = activeCharacter.cameraDistance;
+      group.current.userData.cameraHeight = THREE.MathUtils.clamp(
+        activeCharacter.renderedHeight * 0.55,
+        6,
+        activeCharacter.cameraDistance * 0.68
+      );
+      group.current.userData.lookHeight = THREE.MathUtils.clamp(
+        activeCharacter.renderedHeight * 0.32,
+        4,
+        activeCharacter.cameraDistance * 0.42
+      );
+      group.current.userData.collisionRadius = activeCharacter.collisionRadius;
+      group.current.userData.characterId = activeCharacter.id;
+      group.current.userData.renderedMinY = activeCharacter.renderedMinY;
+      group.current.userData.renderedMaxY = activeCharacter.renderedMaxY;
+      group.current.userData.renderedWidth = activeCharacter.renderedWidth;
+      group.current.userData.renderedLength = activeCharacter.renderedLength;
     }
 
-    const size = bounds.getSize(new THREE.Vector3()).multiplyScalar(PLAYER_SCALE);
-    const localCenter = bounds
-      .getCenter(new THREE.Vector3())
-      .multiplyScalar(PLAYER_SCALE);
-    const horizontalRadius = Math.max(size.x, size.z) * 0.5;
-    const torsoRadius = size.y * 0.32;
-    return {
-      localCenter,
-      radius: THREE.MathUtils.clamp(
-        Math.max(horizontalRadius, torsoRadius),
-        5,
-        14
-      ),
-    };
-  }, [playerScene]);
-
-  useEffect(() => {
-    playerScene.traverse((child) => {
+    const mixer = new THREE.AnimationMixer(activeCharacter.scene);
+    sailMeshesRef.current = [];
+    flagMeshesRef.current = [];
+    activeCharacter.scene.traverse((object) => {
       if (
-        child instanceof THREE.Mesh &&
-        child.material instanceof THREE.MeshStandardMaterial
+        object instanceof THREE.Mesh &&
+        /sail/i.test(object.name) &&
+        object.morphTargetInfluences?.length
       ) {
-        child.material = child.material.clone();
-        child.material.roughness = 0.42;
-        child.material.metalness = 0.05;
-        child.material.envMapIntensity = 0.35;
-        addUnderwaterCaustics(child.material, causticsMap, {
-          includeRipple: false,
-          baseLight: 0,
-          causticsStrength: 0.78,
-          lightTint: [1, 0.98, 0.9],
-        });
-        child.castShadow = true;
-        child.receiveShadow = true;
+        object.morphTargetInfluences[0] = sailInflationRef.current;
+        sailMeshesRef.current.push(object);
+      }
+      if (
+        object instanceof THREE.Mesh &&
+        /pirate_flag/i.test(object.name) &&
+        object.morphTargetInfluences?.length
+      ) {
+        object.morphTargetInfluences[0] = flagTrailRef.current;
+        if (object.morphTargetInfluences.length > 1) {
+          object.morphTargetInfluences[1] = 0.2;
+        }
+        flagMeshesRef.current.push(object);
       }
     });
-  }, [causticsMap, playerScene]);
+    activeCharacter.animations.forEach((clip) => {
+      const action = mixer.clipAction(clip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.clampWhenFinished = false;
+      action.enabled = true;
+      action.play();
+      if (/propeller/i.test(clip.name)) {
+        action.timeScale = propellerRateRef.current;
+        propellerActionRef.current = action;
+      }
+    });
+    mixerRef.current = mixer;
+
+    return () => {
+      mixer.stopAllAction();
+      mixer.uncacheRoot(activeCharacter.scene);
+      if (mixerRef.current === mixer) mixerRef.current = null;
+      if (propellerActionRef.current?.getMixer() === mixer) {
+        propellerActionRef.current = null;
+      }
+      sailMeshesRef.current = [];
+      flagMeshesRef.current = [];
+    };
+  }, [activeCharacter]);
 
   useEffect(() => {
-    playerRef.current = group.current;
+    characterAssetCache.set(wolfyUrl, { scene, animations });
+
+    const selectCharacter = (event: Event) => {
+      const character = (
+        event as CustomEvent<{ character: Character3D }>
+      ).detail?.character;
+      if (!character?.public_url) return;
+
+      const generation = loadGenerationRef.current + 1;
+      loadGenerationRef.current = generation;
+      publishCharacterLoading(character.id, 0);
+
+      const activate = (gltf: LoadedCharacterAsset) => {
+        if (loadGenerationRef.current !== generation) return;
+        const prepared = prepareCharacter(
+          character,
+          gltf.scene,
+          gltf.animations,
+          causticsMap
+        );
+
+        window.requestAnimationFrame(() => {
+          if (loadGenerationRef.current !== generation) return;
+          setActiveCharacter(prepared);
+          window.requestAnimationFrame(() => {
+            if (loadGenerationRef.current !== generation) return;
+            publishCharacterLoading(character.id, 100, { ready: true });
+          });
+        });
+      };
+
+      const cached = characterAssetCache.get(character.public_url);
+      if (cached) {
+        publishCharacterLoading(character.id, 94);
+        activate(cached);
+        return;
+      }
+
+      const loader = new GLTFLoader();
+      loader.load(
+        character.public_url,
+        (gltf) => {
+          characterAssetCache.set(character.public_url, gltf);
+          publishCharacterLoading(character.id, 94);
+          activate(gltf);
+        },
+        (progress) => {
+          if (loadGenerationRef.current !== generation) return;
+          const percent =
+            progress.total > 0
+              ? (progress.loaded / progress.total) * 92
+              : Math.min(88, 12 + Math.log10(progress.loaded + 1) * 12);
+          publishCharacterLoading(character.id, percent);
+        },
+        (error) => {
+          if (loadGenerationRef.current !== generation) return;
+          publishCharacterLoading(character.id, 0, {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Unable to load this character.",
+          });
+        }
+      );
+    };
+
+    window.addEventListener("ocean-character-select", selectCharacter);
+    window.dispatchEvent(new CustomEvent("ocean-character-player-ready"));
+    return () => {
+      window.removeEventListener("ocean-character-select", selectCharacter);
+      loadGenerationRef.current += 1;
+    };
+  }, [animations, causticsMap, scene, wolfyUrl]);
+
+  useEffect(() => {
+    const playerGroup = group.current;
+    playerRef.current = playerGroup;
 
     const joy = (event: Event) => {
       const { x, z } = (event as CustomEvent<{ x: number; z: number }>).detail;
@@ -1439,6 +1958,25 @@ function Player() {
         freeVerticalMovement.current = true;
         grounded.current = false;
       }
+    };
+    const rollByQuarterTurn = (direction: number) => {
+      const currentQuarter = Math.round(
+        rollTarget.current / (Math.PI / 2)
+      );
+      rollTarget.current =
+        (currentQuarter + Math.sign(direction)) * (Math.PI / 2);
+    };
+    const roll = (event: Event) => {
+      rollByQuarterTurn(
+        (event as CustomEvent<{ direction: number }>).detail.direction
+      );
+    };
+    const rollWithKeyboard = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (key !== "z" && key !== "x") return;
+      event.preventDefault();
+      rollByQuarterTurn(key === "z" ? -1 : 1);
     };
     const setSprint = (event: Event) => {
       touchSprint.current = (
@@ -1466,6 +2004,8 @@ function Player() {
     window.addEventListener("explore-joystick", joy);
     window.addEventListener("explore-jump", jump);
     window.addEventListener("explore-vertical", moveVertically);
+    window.addEventListener("explore-roll-step", roll);
+    window.addEventListener("keydown", rollWithKeyboard);
     window.addEventListener("explore-sprint", setSprint);
     window.addEventListener("explore-mode", setExploreMode);
     exploreEnabled.current =
@@ -1477,16 +2017,19 @@ function Player() {
       window.removeEventListener("explore-joystick", joy);
       window.removeEventListener("explore-jump", jump);
       window.removeEventListener("explore-vertical", moveVertically);
+      window.removeEventListener("explore-roll-step", roll);
+      window.removeEventListener("keydown", rollWithKeyboard);
       window.removeEventListener("explore-sprint", setSprint);
       window.removeEventListener("explore-mode", setExploreMode);
-      writePlayerSessionTransform(group.current);
-      if (playerRef.current === group.current) {
+      writePlayerSessionTransform(playerGroup);
+      if (playerRef.current === playerGroup) {
         playerRef.current = null;
       }
     };
   }, []);
 
   useFrame((state, delta) => {
+    mixerRef.current?.update(Math.min(delta, 0.05));
     if (!group.current || !exploreEnabled.current) return;
 
     const input = new THREE.Vector3(
@@ -1522,8 +2065,72 @@ function Player() {
       .addScaledVector(cameraRight, input.x);
 
     if (move.lengthSq() > 0.0001) move.normalize();
-    const movementSpeed = 100 * (1 + sprintBlend.current * 1.65);
+    const isCessna =
+      activeCharacterRef.current.id.includes("cessna-aircraft");
+    const maximumMovementSpeed = isCessna ? 906.25 : 265;
+    const movementSpeed = isCessna
+      ? 125 * (1 + sprintBlend.current * 6.25)
+      : 100 * (1 + sprintBlend.current * 1.65);
     velocity.current.lerp(move.multiplyScalar(movementSpeed), delta * 6);
+    const movementThrottle = THREE.MathUtils.clamp(
+      velocity.current.length() / maximumMovementSpeed,
+      0,
+      1
+    );
+    const targetPropellerRate = 0.42 + movementThrottle * 1.75;
+    propellerRateRef.current = THREE.MathUtils.damp(
+      propellerRateRef.current,
+      targetPropellerRate,
+      targetPropellerRate > propellerRateRef.current ? 3.2 : 2.1,
+      delta
+    );
+    if (propellerActionRef.current) {
+      propellerActionRef.current.timeScale = propellerRateRef.current;
+    }
+    const targetSailInflation = 0.14 + movementThrottle * 0.86;
+    sailInflationRef.current = THREE.MathUtils.damp(
+      sailInflationRef.current,
+      targetSailInflation,
+      targetSailInflation > sailInflationRef.current ? 2.25 : 1.35,
+      delta
+    );
+    sailMeshesRef.current.forEach((sail) => {
+      if (sail.morphTargetInfluences) {
+        sail.morphTargetInfluences[0] = sailInflationRef.current;
+      }
+    });
+    const targetFlagTrail = 0.18 + movementThrottle * 0.82;
+    flagTrailRef.current = THREE.MathUtils.damp(
+      flagTrailRef.current,
+      targetFlagTrail,
+      targetFlagTrail > flagTrailRef.current ? 3.1 : 1.9,
+      delta
+    );
+    flagPhaseRef.current += delta * (2.4 + movementThrottle * 11.5);
+    const flagFlutter = THREE.MathUtils.clamp(
+      0.2 +
+        movementThrottle * 0.34 +
+        Math.sin(flagPhaseRef.current) * (0.08 + movementThrottle * 0.2),
+      0.06,
+      0.82
+    );
+    flagMeshesRef.current.forEach((flag) => {
+      if (flag.morphTargetInfluences) {
+        flag.morphTargetInfluences[0] = flagTrailRef.current;
+        if (flag.morphTargetInfluences.length > 1) {
+          flag.morphTargetInfluences[1] = flagFlutter;
+        }
+      }
+    });
+    engineTelemetryElapsed.current += delta;
+    if (engineTelemetryElapsed.current >= 0.08) {
+      engineTelemetryElapsed.current = 0;
+      window.dispatchEvent(
+        new CustomEvent("ocean-aircraft-throttle", {
+          detail: { throttle: movementThrottle },
+        })
+      );
+    }
 
     const nextPosition = group.current.position
       .clone()
@@ -1535,6 +2142,13 @@ function Player() {
       -1,
       1
     );
+    const rollDifference = rollTarget.current - group.current.rotation.z;
+    if (Math.abs(rollDifference) > 0.0001) {
+      group.current.rotation.z +=
+        rollDifference * (1 - Math.exp(-delta * 9.5));
+    } else {
+      group.current.rotation.z = rollTarget.current;
+    }
     if (Math.abs(verticalInput) > 0.01) {
       jumping.current = false;
       freeVerticalMovement.current = true;
@@ -1544,7 +2158,9 @@ function Player() {
     if (jumping.current) {
       verticalVelocity.current -= JUMP_GRAVITY * Math.min(delta, 0.05);
     } else if (freeVerticalMovement.current) {
-      const verticalSpeed = 58 * (1 + sprintBlend.current * 1.2);
+      const verticalSpeed = isCessna
+        ? 72 * (1 + sprintBlend.current * 4.4)
+        : 58 * (1 + sprintBlend.current * 1.2);
       verticalVelocity.current = THREE.MathUtils.damp(
         verticalVelocity.current,
         verticalInput * verticalSpeed,
@@ -1567,19 +2183,29 @@ function Player() {
       freeVerticalMovement.current =
         Math.abs(landingHeight - PLAYER_GROUND_Y) >= 0.1;
     }
+    const renderedMinY = Number(group.current.userData.renderedMinY) || 0;
+    const characterFloorY = Math.max(
+      SEA_FLOOR_Y + 8,
+      SEA_FLOOR_Y + 1.4 - Math.min(0, renderedMinY)
+    );
     nextPosition.y = THREE.MathUtils.clamp(
       nextPosition.y,
-      SEA_FLOOR_Y + 8,
+      characterFloorY,
       PLAYER_MAX_Y
     );
     if (
-      nextPosition.y === SEA_FLOOR_Y + 8 ||
+      nextPosition.y === characterFloorY ||
       nextPosition.y === PLAYER_MAX_Y
     ) {
       verticalVelocity.current = 0;
     }
 
-    if (islandSurfaceCollider.resolve(nextPosition, 5)) {
+    if (
+      islandSurfaceCollider.resolve(
+        nextPosition,
+        group.current.userData.collisionRadius ?? 5
+      )
+    ) {
       velocity.current.multiplyScalar(0.2);
       verticalVelocity.current *= 0.2;
     }
@@ -1589,18 +2215,32 @@ function Player() {
 
     waterSphereOffset.current
       .copy(waterProxy.localCenter)
-      .applyAxisAngle(waterSphereUp.current, group.current.rotation.y);
+      .applyQuaternion(group.current.quaternion);
     waterSphereCenter.current
       .copy(nextPosition)
       .add(waterSphereOffset.current);
-    if (previousWaterSphereCenter.current) {
-      rippleField.displaceSphere(
-        previousWaterSphereCenter.current,
-        waterSphereCenter.current,
-        waterProxy.radius
-      );
-    } else {
+    waterDisplacementElapsed.current += delta;
+    const touchesSurface =
+      Math.abs(waterSphereCenter.current.y - SEA_LEVEL_Y) <
+      waterProxy.radius * 1.18;
+    if (!previousWaterSphereCenter.current) {
       previousWaterSphereCenter.current = waterSphereCenter.current.clone();
+    } else if (!touchesSurface) {
+      previousWaterSphereCenter.current.copy(waterSphereCenter.current);
+      waterDisplacementElapsed.current = 0;
+    } else if (waterDisplacementElapsed.current >= 1 / 30) {
+      const movedDistance = previousWaterSphereCenter.current.distanceTo(
+        waterSphereCenter.current
+      );
+      if (movedDistance > 0.035) {
+        rippleField.displaceSphere(
+          previousWaterSphereCenter.current,
+          waterSphereCenter.current,
+          Math.min(waterProxy.radius, 11)
+        );
+      }
+      previousWaterSphereCenter.current.copy(waterSphereCenter.current);
+      waterDisplacementElapsed.current = 0;
     }
 
     const crossedSurface =
@@ -1643,7 +2283,6 @@ function Player() {
       }
     }
     previousHeight.current = waterSphereCenter.current.y;
-    previousWaterSphereCenter.current.copy(waterSphereCenter.current);
 
     if (input.lengthSq() > 0.01) {
       const targetDirection = move.clone();
@@ -1654,6 +2293,9 @@ function Player() {
     }
 
     group.current.userData.joyX = joystick.current.x;
+    group.current.userData.speed = velocity.current.length();
+    group.current.userData.headingX = Math.sin(group.current.rotation.y);
+    group.current.userData.headingZ = Math.cos(group.current.rotation.y);
     persistenceElapsed.current += delta;
     if (persistenceElapsed.current >= 0.45) {
       persistenceElapsed.current = 0;
@@ -1662,13 +2304,17 @@ function Player() {
   });
 
   return (
-    <primitive
+    <group
       ref={group}
-      object={playerScene}
-      scale={PLAYER_SCALE}
       position={initialTransform.position}
-      rotation={[0, initialTransform.rotationY, 0]}
-    />
+      rotation={[0, initialTransform.rotationY, initialRoll]}
+    >
+      <primitive
+        key={activeCharacter.id}
+        object={activeCharacter.scene}
+        scale={activeCharacter.modelScale}
+      />
+    </group>
   );
 }
 
@@ -1677,6 +2323,9 @@ function CameraRig() {
   const cameraAngle = useRef(0);
   const blend = useRef(0);
   const explore = useRef(false);
+  const cameraDistance = useRef(70);
+  const cameraHeight = useRef(22);
+  const lookHeight = useRef(6);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1702,7 +2351,30 @@ function CameraRig() {
 
     if (Math.abs(strafe) > 0.05) cameraAngle.current -= strafe * delta * 2.5;
 
-    const offset = new THREE.Vector3(0, 22, 70);
+    cameraDistance.current = THREE.MathUtils.damp(
+      cameraDistance.current,
+      Number(player.userData?.cameraDistance) || 70,
+      3.5,
+      delta
+    );
+    cameraHeight.current = THREE.MathUtils.damp(
+      cameraHeight.current,
+      Number(player.userData?.cameraHeight) || 22,
+      3.5,
+      delta
+    );
+    lookHeight.current = THREE.MathUtils.damp(
+      lookHeight.current,
+      Number(player.userData?.lookHeight) || 6,
+      3.5,
+      delta
+    );
+
+    const offset = new THREE.Vector3(
+      0,
+      cameraHeight.current,
+      cameraDistance.current
+    );
     offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngle.current);
     const followPosition = player.position.clone().add(offset);
     const introPosition = new THREE.Vector3(0, 20, 100).add(
@@ -1714,7 +2386,7 @@ function CameraRig() {
 
     const introLook = new THREE.Vector3(0, 5, 0);
     const followLook = player.position.clone();
-    followLook.y += 6;
+    followLook.y += lookHeight.current;
     camera.lookAt(introLook.lerp(followLook, ease));
   });
 
@@ -1732,27 +2404,33 @@ function OceanSoundscape() {
     audio.volume = 0;
 
     audioRef.current = audio;
+    let fadeFrame = 0;
 
     const fadeTo = (target: number, duration = 2000) => {
       if (!audioRef.current) return;
 
+      window.cancelAnimationFrame(fadeFrame);
       const element = audioRef.current;
       const startVolume = element.volume;
       const start = performance.now();
 
       const animate = (time: number) => {
-        const t = Math.min((time - start) / duration, 1);
-        element.volume = startVolume + (target - startVolume) * t;
+        const t = THREE.MathUtils.clamp((time - start) / duration, 0, 1);
+        element.volume = THREE.MathUtils.clamp(
+          startVolume + (target - startVolume) * t,
+          0,
+          1
+        );
 
         if (t < 1) {
-          requestAnimationFrame(animate);
+          fadeFrame = window.requestAnimationFrame(animate);
         } else if (target === 0) {
           element.pause();
           element.currentTime = 0;
         }
       };
 
-      requestAnimationFrame(animate);
+      fadeFrame = window.requestAnimationFrame(animate);
     };
 
     const activate = async () => {
@@ -1808,9 +2486,123 @@ function OceanSoundscape() {
       window.removeEventListener("skyocean-audio", handleAudioState);
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
+      window.cancelAnimationFrame(fadeFrame);
 
       audio.pause();
       audio.src = "";
+    };
+  }, []);
+
+  return null;
+}
+
+function AircraftEngineSound() {
+  useEffect(() => {
+    const audioContext = new AudioContext();
+    const engineGain = audioContext.createGain();
+    engineGain.gain.value = 0;
+    engineGain.connect(audioContext.destination);
+    const bufferPromise = fetch(
+      `${import.meta.env.BASE_URL}cessna-engine.wav`
+    )
+      .then((response) => response.arrayBuffer())
+      .then((buffer) => audioContext.decodeAudioData(buffer));
+    let source: AudioBufferSourceNode | null = null;
+    let currentCharacterId = "";
+    let throttle = 0;
+    let exploreActive =
+      document
+        .getElementById("global-sky-ocean-bg")
+        ?.getAttribute("data-explore") === "1";
+
+    const ensureSource = async () => {
+      if (source) return;
+      const buffer = await bufferPromise;
+      if (audioContext.state === "closed") return;
+      source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.playbackRate.value = 0.82;
+      source.connect(engineGain);
+      source.start();
+    };
+
+    const update = async () => {
+      const shouldPlay =
+        exploreActive && currentCharacterId.includes("cessna-aircraft");
+      const now = audioContext.currentTime;
+      engineGain.gain.cancelScheduledValues(now);
+      engineGain.gain.setValueAtTime(engineGain.gain.value, now);
+
+      if (shouldPlay) {
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+        await ensureSource();
+        engineGain.gain.linearRampToValueAtTime(
+          0.2 + throttle * 0.07,
+          now + 0.7
+        );
+      } else {
+        engineGain.gain.linearRampToValueAtTime(0, now + 0.55);
+      }
+    };
+
+    const onCharacter = (event: Event) => {
+      currentCharacterId = (
+        event as CustomEvent<{ id: string }>
+      ).detail.id;
+      void update();
+    };
+    const onExplore = (event: Event) => {
+      exploreActive = (
+        event as CustomEvent<{ enabled: boolean }>
+      ).detail.enabled;
+      void update();
+    };
+    const onThrottle = (event: Event) => {
+      throttle = THREE.MathUtils.clamp(
+        (event as CustomEvent<{ throttle: number }>).detail.throttle,
+        0,
+        1
+      );
+      if (!source) return;
+      const now = audioContext.currentTime;
+      source.playbackRate.cancelScheduledValues(now);
+      source.playbackRate.setTargetAtTime(
+        0.82 + throttle * 0.52,
+        now,
+        throttle > 0.45 ? 0.16 : 0.28
+      );
+      if (exploreActive && currentCharacterId.includes("cessna-aircraft")) {
+        engineGain.gain.cancelScheduledValues(now);
+        engineGain.gain.setTargetAtTime(
+          0.2 + throttle * 0.07,
+          now,
+          0.22
+        );
+      }
+    };
+    const unlock = () => {
+      void update();
+    };
+
+    window.addEventListener("ocean-active-character-change", onCharacter);
+    window.addEventListener("explore-mode", onExplore);
+    window.addEventListener("ocean-aircraft-throttle", onThrottle);
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+
+    return () => {
+      window.removeEventListener("ocean-active-character-change", onCharacter);
+      window.removeEventListener("explore-mode", onExplore);
+      window.removeEventListener("ocean-aircraft-throttle", onThrottle);
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      source?.stop();
+      source?.disconnect();
+      engineGain.disconnect();
+      void audioContext.close();
     };
   }, []);
 
@@ -1887,6 +2679,7 @@ export default function SkyOceanBackground() {
   return (
     <>
       <OceanSoundscape />
+      <AircraftEngineSound />
       <SurfaceCrossingSound />
       <Canvas
         shadows
@@ -1928,6 +2721,7 @@ export default function SkyOceanBackground() {
           <SeaFloor />
           <RisingBubbleFields />
           <Ocean />
+          <CharacterSurfaceWake />
           <UnderwaterSurface />
           <Island />
           <Player />
