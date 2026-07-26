@@ -148,7 +148,16 @@ const libraryStyles = `
   );
   min-height: 0;
   padding: clamp(8px, 1.6vw, 24px);
-  contain: layout paint;
+  contain: layout;
+  isolation: isolate;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+.public-book-viewport .stf__parent,
+.public-book-viewport .stf__wrapper {
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
 }
 
 .public-book-viewport .stf__hardShadow,

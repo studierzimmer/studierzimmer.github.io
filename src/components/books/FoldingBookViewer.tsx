@@ -241,15 +241,27 @@ const PageFace = forwardRef<HTMLDivElement, PageFaceProps>(function PageFace(
         className={`relative h-full w-full overflow-visible ${
           commentMode ? "cursor-crosshair" : ""
         }`}
+        style={{
+          backfaceVisibility: "hidden",
+          WebkitBackfaceVisibility: "hidden",
+          transform: "translateZ(0.01px)",
+          WebkitTransform: "translateZ(0.01px)",
+        }}
       >
         <img
           src={page.public_url}
           alt={`Page ${page.page_number}: ${page.file_name}`}
           draggable={false}
-          decoding="async"
+          decoding="sync"
           onLoad={onImageReady}
           onError={onImageReady}
           className="pointer-events-none h-full w-full select-none object-cover object-center"
+          style={{
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden",
+            transform: "translateZ(0)",
+            WebkitTransform: "translateZ(0)",
+          }}
         />
 
         <div

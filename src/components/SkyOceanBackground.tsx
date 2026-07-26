@@ -411,11 +411,35 @@ class RippleField {
       return;
     }
 
-    this.center.set(x, z);
-    this.height.fill(0);
-    this.velocity.fill(0);
+    const pixelWorldSize =
+      RIPPLE_WORLD_SIZE / (RIPPLE_TEXTURE_SIZE - 1);
+    const shiftX = Math.round((x - this.center.x) / pixelWorldSize);
+    const shiftZ = Math.round((z - this.center.y) / pixelWorldSize);
+
     this.nextHeight.fill(0);
     this.nextVelocity.fill(0);
+
+    for (let targetZ = 0; targetZ < RIPPLE_TEXTURE_SIZE; targetZ += 1) {
+      const sourceZ = targetZ + shiftZ;
+      if (sourceZ < 0 || sourceZ >= RIPPLE_TEXTURE_SIZE) continue;
+
+      for (let targetX = 0; targetX < RIPPLE_TEXTURE_SIZE; targetX += 1) {
+        const sourceX = targetX + shiftX;
+        if (sourceX < 0 || sourceX >= RIPPLE_TEXTURE_SIZE) continue;
+
+        const targetIndex = targetZ * RIPPLE_TEXTURE_SIZE + targetX;
+        const sourceIndex = sourceZ * RIPPLE_TEXTURE_SIZE + sourceX;
+        this.nextHeight[targetIndex] = this.height[sourceIndex];
+        this.nextVelocity[targetIndex] = this.velocity[sourceIndex];
+      }
+    }
+
+    this.height.set(this.nextHeight);
+    this.velocity.set(this.nextVelocity);
+    this.nextHeight.fill(0);
+    this.nextVelocity.fill(0);
+    this.center.x += shiftX * pixelWorldSize;
+    this.center.y += shiftZ * pixelWorldSize;
     this.encodeTexture();
   }
 
@@ -608,6 +632,7 @@ function Ocean() {
       const ocean = new Water(geometry, {
         textureWidth: 512,
         textureHeight: 512,
+        clipBias: 0.003,
         waterNormals,
         sunDirection: FIXED_WATER_SUN_DIRECTION.clone(),
         sunColor: new THREE.Color("#fff2cc"),
@@ -619,6 +644,8 @@ function Ocean() {
       const material = ocean.material as THREE.ShaderMaterial;
 
       material.transparent = true;
+      material.depthTest = true;
+      material.depthWrite = true;
       material.uniforms.rippleSampler = { value: rippleField.texture };
       material.uniforms.rippleCenter = { value: rippleField.center };
       material.uniforms.rippleWorldSize = { value: RIPPLE_WORLD_SIZE };
@@ -798,49 +825,42 @@ function SeaFloor() {
 
 function RisingBubbleFields() {
   const visibility = useRef(0);
-  const bubbles = useMemo(
+  const cellSize = 260;
+  const cellRadius = 4;
+  const renderRange = cellSize * (cellRadius + 0.55);
+  const bubbleSlots = useMemo(
     () =>
-      Array.from({ length: 14 }, (_, ventIndex) => {
-        const count = ventIndex % 2 === 0 ? 2 : 3;
-        const angle = ventIndex * 2.399963229728653;
-        const radius = 95 + (ventIndex % 7) * 135;
-        const ventX = Math.cos(angle) * radius;
-        const ventZ = Math.sin(angle) * radius - 260;
-
-        return Array.from({ length: count }, (_, memberIndex) => ({
-          baseX:
-            ventX +
-            Math.cos(angle + memberIndex * 1.7) * (2.4 + memberIndex * 1.8),
-          baseZ:
-            ventZ +
-            Math.sin(angle + memberIndex * 1.7) * (2.4 + memberIndex * 1.8),
-          phase:
-            (ventIndex / 14 + memberIndex * 0.027 + (ventIndex % 3) * 0.013) %
-            1,
-          duration: 17 + (ventIndex % 5) * 2.2 + memberIndex * 1.4,
-          size: 5.2 + (ventIndex % 4) * 0.9 + memberIndex * 0.65,
-          drift: 2.4 + (ventIndex % 3) * 1.1,
-          driftPhase: angle + memberIndex * 2.1,
-        }));
-      }).flat(),
+      Array.from(
+        { length: (cellRadius * 2 + 1) ** 2 * 3 },
+        (_, index) => {
+          const cellIndex = Math.floor(index / 3);
+          return {
+            relativeCellX:
+              (cellIndex % (cellRadius * 2 + 1)) - cellRadius,
+            relativeCellZ:
+              Math.floor(cellIndex / (cellRadius * 2 + 1)) - cellRadius,
+            memberIndex: index % 3,
+          };
+        }
+      ),
     []
   );
   const geometry = useMemo(() => {
     const bubbleGeometry = new THREE.BufferGeometry();
     bubbleGeometry.setAttribute(
       "position",
-      new THREE.BufferAttribute(new Float32Array(bubbles.length * 3), 3)
+      new THREE.BufferAttribute(new Float32Array(bubbleSlots.length * 3), 3)
     );
     bubbleGeometry.setAttribute(
       "aSize",
-      new THREE.BufferAttribute(new Float32Array(bubbles.length), 1)
+      new THREE.BufferAttribute(new Float32Array(bubbleSlots.length), 1)
     );
     bubbleGeometry.setAttribute(
       "aAlpha",
-      new THREE.BufferAttribute(new Float32Array(bubbles.length), 1)
+      new THREE.BufferAttribute(new Float32Array(bubbleSlots.length), 1)
     );
     return bubbleGeometry;
-  }, [bubbles.length]);
+  }, [bubbleSlots.length]);
   const material = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -914,28 +934,72 @@ function RisingBubbleFields() {
     const alphas = geometry.getAttribute("aAlpha") as THREE.BufferAttribute;
     const elapsed = clock.elapsedTime;
     const travelHeight = SEA_LEVEL_Y - SEA_FLOOR_Y - 7;
+    const playerPosition = playerRef.current?.position ?? camera.position;
+    const centerCellX = Math.floor(playerPosition.x / cellSize);
+    const centerCellZ = Math.floor(playerPosition.z / cellSize);
+    const stableHash = (x: number, z: number, salt: number) => {
+      const raw =
+        Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453;
+      return raw - Math.floor(raw);
+    };
 
-    bubbles.forEach((bubble, index) => {
-      const progress = (elapsed / bubble.duration + bubble.phase) % 1;
+    bubbleSlots.forEach((slot, index) => {
+      const cellX = centerCellX + slot.relativeCellX;
+      const cellZ = centerCellZ + slot.relativeCellZ;
+      const memberCount = stableHash(cellX, cellZ, 1) > 0.48 ? 3 : 2;
+      if (slot.memberIndex >= memberCount) {
+        alphas.setX(index, 0);
+        return;
+      }
+
+      const ventX =
+        (cellX + 0.14 + stableHash(cellX, cellZ, 2) * 0.72) * cellSize;
+      const ventZ =
+        (cellZ + 0.14 + stableHash(cellX, cellZ, 3) * 0.72) * cellSize;
+      const angle =
+        stableHash(cellX, cellZ, 4) * Math.PI * 2 +
+        slot.memberIndex * 2.1;
+      const baseX = ventX + Math.cos(angle) * (3 + slot.memberIndex * 2);
+      const baseZ = ventZ + Math.sin(angle) * (3 + slot.memberIndex * 2);
+      const phase =
+        (stableHash(cellX, cellZ, 5 + slot.memberIndex) +
+          slot.memberIndex * 0.07) %
+        1;
+      const duration =
+        16 + stableHash(cellX, cellZ, 9 + slot.memberIndex) * 10;
+      const size =
+        4.8 + stableHash(cellX, cellZ, 13 + slot.memberIndex) * 3.2;
+      const drift =
+        2.2 + stableHash(cellX, cellZ, 17 + slot.memberIndex) * 2.4;
+      const progress = (elapsed / duration + phase) % 1;
       const sway =
-        Math.sin(elapsed * 0.72 + bubble.driftPhase + progress * Math.PI * 3) *
-        bubble.drift;
+        Math.sin(elapsed * 0.72 + angle + progress * Math.PI * 3) *
+        drift;
       const crossSway =
-        Math.cos(elapsed * 0.51 + bubble.driftPhase * 1.4) *
-        bubble.drift *
-        0.55;
+        Math.cos(elapsed * 0.51 + angle * 1.4) * drift * 0.55;
       const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.08);
       const fadeOut =
         1 - THREE.MathUtils.smoothstep(progress, 0.8, 0.985);
+      const distance = Math.hypot(
+        baseX - playerPosition.x,
+        baseZ - playerPosition.z
+      );
+      const rangeFade =
+        1 -
+        THREE.MathUtils.smoothstep(
+          distance,
+          renderRange * 0.72,
+          renderRange
+        );
 
       positions.setXYZ(
         index,
-        bubble.baseX + sway,
+        baseX + sway,
         SEA_FLOOR_Y + 4 + progress * travelHeight,
-        bubble.baseZ + crossSway
+        baseZ + crossSway
       );
-      sizes.setX(index, bubble.size * (0.82 + progress * 0.48));
-      alphas.setX(index, fadeIn * fadeOut * 0.86);
+      sizes.setX(index, size * (0.82 + progress * 0.48));
+      alphas.setX(index, fadeIn * fadeOut * rangeFade * 0.82);
     });
 
     positions.needsUpdate = true;
@@ -1039,6 +1103,7 @@ function UnderwaterSurface() {
         side: THREE.BackSide,
         transparent: true,
         depthWrite: false,
+        depthTest: true,
       }),
     [waterNormals]
   );
@@ -1050,7 +1115,7 @@ function UnderwaterSurface() {
     if (ref.current) {
       ref.current.position.x = camera.position.x;
       ref.current.position.z = camera.position.z;
-      ref.current.visible = camera.position.y < SEA_LEVEL_Y + 1;
+      ref.current.visible = camera.position.y < SEA_LEVEL_Y - 0.35;
     }
   });
 
@@ -1058,7 +1123,7 @@ function UnderwaterSurface() {
     <mesh
       ref={ref}
       rotation-x={-Math.PI / 2}
-      position-y={SEA_LEVEL_Y - 0.08}
+      position-y={SEA_LEVEL_Y - 0.22}
       renderOrder={3}
       frustumCulled={false}
     >
@@ -1289,7 +1354,7 @@ function Player() {
     Math.abs(initialTransform.position[1] - PLAYER_GROUND_Y) < 0.1;
   const joystick = useRef(new THREE.Vector3());
   const verticalControl = useRef(0);
-  const touchMovementHold = useRef(0);
+  const touchSprint = useRef(false);
   const sprintBlend = useRef(0);
   const persistenceElapsed = useRef(0);
   const velocity = useRef(new THREE.Vector3());
@@ -1375,6 +1440,11 @@ function Player() {
         grounded.current = false;
       }
     };
+    const setSprint = (event: Event) => {
+      touchSprint.current = (
+        event as CustomEvent<{ active: boolean }>
+      ).detail.active;
+    };
     const setExploreMode = (event: Event) => {
       exploreEnabled.current = (
         event as CustomEvent<{ enabled: boolean }>
@@ -1387,7 +1457,7 @@ function Player() {
           Math.abs(group.current.position.y - PLAYER_GROUND_Y) < 0.1;
         grounded.current = atGround;
         freeVerticalMovement.current = !atGround;
-        touchMovementHold.current = 0;
+        touchSprint.current = false;
         sprintBlend.current = 0;
         writePlayerSessionTransform(group.current);
       }
@@ -1396,6 +1466,7 @@ function Player() {
     window.addEventListener("explore-joystick", joy);
     window.addEventListener("explore-jump", jump);
     window.addEventListener("explore-vertical", moveVertically);
+    window.addEventListener("explore-sprint", setSprint);
     window.addEventListener("explore-mode", setExploreMode);
     exploreEnabled.current =
       document
@@ -1406,6 +1477,7 @@ function Player() {
       window.removeEventListener("explore-joystick", joy);
       window.removeEventListener("explore-jump", jump);
       window.removeEventListener("explore-vertical", moveVertically);
+      window.removeEventListener("explore-sprint", setSprint);
       window.removeEventListener("explore-mode", setExploreMode);
       writePlayerSessionTransform(group.current);
       if (playerRef.current === group.current) {
@@ -1429,14 +1501,8 @@ function Player() {
 
     if (input.lengthSq() < 0.01) input.set(0, 0, 0);
 
-    const touchMovementActive =
-      joystick.current.lengthSq() > 0.01 ||
-      Math.abs(verticalControl.current) > 0.01;
-    touchMovementHold.current = touchMovementActive
-      ? touchMovementHold.current + delta
-      : 0;
     const sprintRequested =
-      Boolean(keys.shift) || touchMovementHold.current > 0.45;
+      Boolean(keys.shift) || touchSprint.current;
     sprintBlend.current = THREE.MathUtils.damp(
       sprintBlend.current,
       sprintRequested ? 1 : 0,

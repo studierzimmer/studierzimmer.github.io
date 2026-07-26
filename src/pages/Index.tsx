@@ -1199,6 +1199,7 @@ const Index = () => {
   const draggingRef = useRef(false);
   const joystickTapEligibleRef = useRef(false);
   const joystickMovedRef = useRef(false);
+  const joystickPointerIdRef = useRef<number | null>(null);
   const pointerOriginRef = useRef({ x: 0, y: 0 });
 
   const startRef = useRef<{ x: number; y: number }>({
@@ -1257,6 +1258,44 @@ const Index = () => {
   }, [exploreMode, sendJoystick, sendVertical]);
 
   useEffect(() => {
+    if (!exploreMode) return;
+
+    const activeTouches = new Set<number>();
+    const publishSprint = () => {
+      window.dispatchEvent(
+        new CustomEvent("explore-sprint", {
+          detail: { active: activeTouches.size >= 2 },
+        })
+      );
+    };
+    const addTouch = (event: PointerEvent) => {
+      if (event.pointerType !== "touch") return;
+      activeTouches.add(event.pointerId);
+      publishSprint();
+    };
+    const removeTouch = (event: PointerEvent) => {
+      if (event.pointerType !== "touch") return;
+      activeTouches.delete(event.pointerId);
+      publishSprint();
+    };
+
+    window.addEventListener("pointerdown", addTouch, true);
+    window.addEventListener("pointerup", removeTouch, true);
+    window.addEventListener("pointercancel", removeTouch, true);
+
+    return () => {
+      window.removeEventListener("pointerdown", addTouch, true);
+      window.removeEventListener("pointerup", removeTouch, true);
+      window.removeEventListener("pointercancel", removeTouch, true);
+      window.dispatchEvent(
+        new CustomEvent("explore-sprint", {
+          detail: { active: false },
+        })
+      );
+    };
+  }, [exploreMode]);
+
+  useEffect(() => {
     if (!exploreMode) {
       return;
     }
@@ -1299,7 +1338,9 @@ const Index = () => {
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (!exploreMode) return;
+      if (joystickPointerIdRef.current !== null) return;
 
+      joystickPointerIdRef.current = event.pointerId;
       draggingRef.current = true;
       event.currentTarget.setPointerCapture(event.pointerId);
 
@@ -1326,7 +1367,13 @@ const Index = () => {
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!draggingRef.current || !joyKnobRef.current) return;
+      if (
+        !draggingRef.current ||
+        joystickPointerIdRef.current !== event.pointerId ||
+        !joyKnobRef.current
+      ) {
+        return;
+      }
 
       const dx = event.clientX - startRef.current.x;
       const dy = event.clientY - startRef.current.y;
@@ -1358,9 +1405,15 @@ const Index = () => {
 
   const onPointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!draggingRef.current) return;
+      if (
+        !draggingRef.current ||
+        joystickPointerIdRef.current !== event.pointerId
+      ) {
+        return;
+      }
 
       draggingRef.current = false;
+      joystickPointerIdRef.current = null;
 
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
