@@ -1,4 +1,5 @@
 import type { OceanEnvironmentSettings } from "./oceanEnvironment";
+import type { OceanLabels } from "./oceanText";
 
 export type MenuKey =
   | "bio"
@@ -44,6 +45,7 @@ export interface SiteSettings {
   ocean_text_color?: string | null;
   ocean_background_color?: string | null;
   ocean_environment?: OceanEnvironmentSettings;
+  ocean_labels?: Partial<OceanLabels>;
 }
 
 export interface ArtworkItem {

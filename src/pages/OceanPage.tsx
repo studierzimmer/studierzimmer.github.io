@@ -7,7 +7,9 @@ import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditCont
 import { listPublishedCharacters } from "@/services/characterRepository";
 import type { Character3D } from "@/types/characters3d";
 import OceanEnvironmentEditor from "@/components/ocean/OceanEnvironmentEditor";
+import OceanInlineText from "@/components/ocean/OceanInlineText";
 import { normalizeOceanEnvironment, OCEAN_ENVIRONMENT_EVENT } from "@/types/oceanEnvironment";
+import { DEFAULT_OCEAN_LABELS, normalizeOceanLabels, type OceanLabels } from "@/types/oceanText";
 import "@/styles/ocean-page.css";
 
 const send = (name: string, detail?: unknown) => window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -48,8 +50,10 @@ function reverseOceanAperture(animation: Animation): Promise<unknown> | null {
 
 export default function OceanPage() {
   const navigate = useNavigate();
-  const { editing, settings, draft, update } = useInlineSiteEditing();
+  const { editing, settings, draft, update, saving } = useInlineSiteEditing();
   const content = editing ? draft : settings;
+  const labels = normalizeOceanLabels(content.ocean_labels);
+  const updateLabel = (key: keyof OceanLabels, value: string) => update({ ocean_labels: { ...labels, [key]: value } });
   const environment = useMemo(() => normalizeOceanEnvironment(content.ocean_environment), [content.ocean_environment]);
   const reduced = useReducedMotion();
   const [submerged, setSubmerged] = useState(() => document.getElementById("global-sky-ocean-bg")?.getAttribute("data-underwater") === "1");
@@ -63,7 +67,7 @@ export default function OceanPage() {
   const [figuresOpen, setFiguresOpen] = useState(false);
   const [musicOpen, setMusicOpen] = useState(false);
   const [characters, setCharacters] = useState<Character3D[]>([]);
-  const [characterError, setCharacterError] = useState<string | null>(null);
+  const [characterError, setCharacterError] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character3D | null>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   const circle = useRef<SVGCircleElement>(null);
@@ -84,7 +88,7 @@ export default function OceanPage() {
   }, []);
 
   useEffect(() => {
-    if (!figuresOpen && !musicOpen) return;
+    if (editing || (!figuresOpen && !musicOpen)) return;
     const dismiss = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-ocean-panel], [data-ocean-panel-toggle]")) return;
       setFiguresOpen(false); setMusicOpen(false);
@@ -95,7 +99,7 @@ export default function OceanPage() {
     document.addEventListener("pointerdown", dismiss, true);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", dismiss, true); document.removeEventListener("keydown", escape); };
-  }, [figuresOpen, musicOpen]);
+  }, [editing, figuresOpen, musicOpen]);
 
   useLayoutEffect(() => {
     const element = aboutMeasure.current;
@@ -215,7 +219,7 @@ export default function OceanPage() {
   useEffect(() => {
     if (!figuresOpen || characters.length) return;
     let active = true;
-    void listPublishedCharacters().then((items) => { if (active) { setCharacters(items); setCharacterError(null); } }).catch(() => { if (active) setCharacterError("Il catalogo delle figure non è disponibile. La figura inclusa resta utilizzabile."); });
+    void listPublishedCharacters().then((items) => { if (active) { setCharacters(items); setCharacterError(false); } }).catch(() => { if (active) setCharacterError(true); });
     return () => { active = false; };
   }, [figuresOpen, characters.length]);
 
@@ -243,24 +247,33 @@ export default function OceanPage() {
   const hold = (event: React.PointerEvent<HTMLButtonElement>, y: number) => { if (exitingRef.current) return; event.currentTarget.setPointerCapture(event.pointerId); send("explore-vertical", { y }); };
 
   return (
-    <main className="ocean-page" style={{ color: content.ocean_text_color ?? (submerged ? "#dcebf1" : content.menu_color) }} aria-busy={exiting} onKeyDownCapture={(event) => { if (exitingRef.current) { event.preventDefault(); event.stopPropagation(); } }}>
+    <main className={`ocean-page${editing ? " is-editing" : ""}`} style={{ color: content.ocean_text_color ?? (submerged ? "#dcebf1" : content.menu_color) }} aria-busy={exiting} onKeyDownCapture={(event) => { if (exitingRef.current) { event.preventDefault(); event.stopPropagation(); } }}>
       <SiteEditControl section="navigate" />
       <OceanEnvironmentEditor />
       <svg className="ocean-aperture" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><mask id={mask} maskUnits="userSpaceOnUse" x="-100" y="-100" width="300" height="300"><rect x="-100" y="-100" width="300" height="300" fill="white" /><circle ref={circle} cx="50" cy="50" r="9" fill="black" style={{ transformOrigin: "50px 50px", transform: reduced ? "scale(9)" : "scale(0)" }} /></mask></defs><rect className="ocean-aperture-veil" width="100" height="100" fill={content.menu_background_color ?? "#ffffff"} mask={`url(#${mask})`} /></svg>
       {ready && (!started || editing) && <div className={`ocean-intro ${introClosing ? "is-closing" : ""}`}>
         <motion.div layout="position" transition={{ layout: reduced ? { duration: 0 } : introSpring }} className="ocean-intro-content blossom" data-blossom style={{ fontFamily: content.menu_font_family, fontSize: `${content.menu_font_size}px`, backgroundColor: content.ocean_background_color ?? "transparent", letterSpacing: `${content.menu_letter_spacing}px` }}>
-          {editing ? <><input aria-label="Titolo Ocean" value={content.ocean_title ?? "Studierzimmer-Ozean"} onChange={(event) => update({ ocean_title: event.target.value })} /><input aria-label="Sottotitolo Ocean" value={content.ocean_subtitle ?? "studierzimmer.ch"} onChange={(event) => update({ ocean_subtitle: event.target.value })} /><textarea aria-label="Testo Ocean" value={content.ocean_about ?? ""} onChange={(event) => update({ ocean_about: event.target.value })} rows={5} /></> : <><p>{content.ocean_title ?? "Studierzimmer-Ozean"}</p><p>{content.ocean_subtitle ?? "studierzimmer.ch"}</p></>}
-          {!editing && <><div className="ocean-intro-actions"><button onClick={() => navigate("/")}>Exit</button><button onClick={start}>start</button><button aria-expanded={about} aria-controls={aboutId} onClick={() => { if (about) setAbout(false); else { setAboutExpanded(true); setAbout(true); } }}>about</button></div>
-            <motion.div id={aboutId} className="ocean-about-reveal" initial={false} animate={{ height: aboutExpanded ? aboutHeight : 0 }} transition={reduced ? { duration: 0 } : introSpring} aria-hidden={!about}>
-              <div ref={aboutMeasure} className="ocean-about-measure"><motion.p className="ocean-about" initial={false} animate={{ scale: about ? 1 : 0 }} transition={reduced ? { duration: 0 } : introSpring} onAnimationComplete={() => { if (!about) setAboutExpanded(false); }}>{content.ocean_about || "Uno spazio da attraversare, fra cielo e mare."}</motion.p></div>
+          {editing ? <><OceanInlineText label="Titolo Ocean" value={content.ocean_title ?? "Studierzimmer-Ozean"} disabled={saving} onChange={(value) => update({ ocean_title: value })} /><OceanInlineText label="Sottotitolo Ocean" value={content.ocean_subtitle ?? "studierzimmer.ch"} disabled={saving} onChange={(value) => update({ ocean_subtitle: value })} /></> : <><p>{content.ocean_title ?? "Studierzimmer-Ozean"}</p><p>{content.ocean_subtitle ?? "studierzimmer.ch"}</p></>}
+          <div className="ocean-intro-actions">{editing ? <>
+            <OceanInlineText action label="Testo pulsante Exit" value={labels.exit} disabled={saving} onChange={(value) => updateLabel("exit", value)} />
+            <OceanInlineText action label="Testo pulsante start" value={labels.start} disabled={saving} onChange={(value) => updateLabel("start", value)} />
+            <OceanInlineText action label="Testo pulsante about" value={labels.about} disabled={saving} onChange={(value) => updateLabel("about", value)} />
+          </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.start.trim() || DEFAULT_OCEAN_LABELS.start} onClick={start}>{labels.start}</button><button aria-label={labels.about.trim() || DEFAULT_OCEAN_LABELS.about} aria-expanded={about} aria-controls={aboutId} onClick={() => { if (about) setAbout(false); else { setAboutExpanded(true); setAbout(true); } }}>{labels.about}</button></>}</div>
+            <motion.div id={aboutId} className="ocean-about-reveal" initial={false} animate={{ height: editing ? "auto" : aboutExpanded ? aboutHeight : 0 }} transition={reduced ? { duration: 0 } : introSpring} aria-hidden={!editing && !about}>
+              <div ref={aboutMeasure} className="ocean-about-measure"><motion.p className="ocean-about" initial={false} animate={{ scale: editing || about ? 1 : 0 }} transition={reduced ? { duration: 0 } : introSpring} onAnimationComplete={() => { if (!about && !editing) setAboutExpanded(false); }}>{editing ? <OceanInlineText multiline label="Testo Ocean" value={content.ocean_about ?? ""} disabled={saving} onChange={(value) => update({ ocean_about: value })} /> : content.ocean_about ?? "Uno spazio da attraversare, fra cielo e mare."}</motion.p></div>
             </motion.div>
-          </>}
+          {editing && <p className="ocean-edit-hint" role="status">Modifica i testi sottolineati · Salva o Annulla per tornare alla navigazione.</p>}
         </motion.div>
       </div>}
-      {ready && started && !editing && <>
-        <div data-ocean-control data-blossom className="ocean-tools blossom"><button onClick={() => navigate("/")}>Exit</button><button data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => { setFiguresOpen((current) => !current); setMusicOpen(false); }}>figura</button><button data-ocean-panel-toggle aria-expanded={musicOpen} aria-controls={musicId} onClick={() => { setMusicOpen((current) => !current); setFiguresOpen(false); }}>musica</button></div>
+      {ready && (started || editing) && <>
+        <div data-ocean-control data-blossom className="ocean-tools blossom">{editing ? <>
+          <OceanInlineText action label="Testo Exit nella navigazione" value={labels.exit} disabled={saving} onChange={(value) => updateLabel("exit", value)} />
+          <OceanInlineText action label="Testo pulsante figura" value={labels.figure} disabled={saving} onChange={(value) => updateLabel("figure", value)} />
+          <OceanInlineText action label="Testo pulsante musica" value={labels.music} disabled={saving} onChange={(value) => updateLabel("music", value)} />
+        </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.figure.trim() || DEFAULT_OCEAN_LABELS.figure} data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => { setFiguresOpen((current) => !current); setMusicOpen(false); }}>{labels.figure}</button><button aria-label={labels.music.trim() || DEFAULT_OCEAN_LABELS.music} data-ocean-panel-toggle aria-expanded={musicOpen} aria-controls={musicId} onClick={() => { setMusicOpen((current) => !current); setFiguresOpen(false); }}>{labels.music}</button></>}</div>
+        {!editing && <>
         <AnimatePresence>
-          {figuresOpen && <motion.section key="figures" id={figuresId} data-ocean-control data-ocean-panel className="ocean-figures" aria-label="Figure del mondo" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}>{characterError && <p role="status">{characterError}</p>}{!characters.length && !characterError && <p>caricamento…</p>}{characters.map((character) => <button key={character.id} onClick={() => { setSelectedCharacter(character); setFiguresOpen(false); }}>{character.name}</button>)}</motion.section>}
+          {figuresOpen && <motion.section key="figures" id={figuresId} data-ocean-control data-ocean-panel className="ocean-figures" aria-label="Figure del mondo" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}>{characterError && <p role="status">{labels.figuresUnavailable}</p>}{!characters.length && !characterError && <p>{labels.loadingFigures}</p>}{characters.map((character) => <button key={character.id} onClick={() => { setSelectedCharacter(character); setFiguresOpen(false); }}>{character.name}</button>)}</motion.section>}
           {musicOpen && <motion.div key="music" id={musicId} data-ocean-control data-ocean-panel className="ocean-music" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}><iframe title="Musica di Studier Zimmer" src="https://open.spotify.com/embed/playlist/5Z63kqzOn4CzWqazejJZEv?utm_source=generator" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy" /></motion.div>}
         </AnimatePresence>
         <div data-ocean-control data-blossom className="ocean-movement blossom">
@@ -269,6 +282,7 @@ export default function OceanPage() {
           <button className="ocean-movement-ascend" aria-label="Sali" onPointerDown={(event) => hold(event, 1)} onPointerUp={() => send("explore-vertical", { y: 0 })} onPointerCancel={() => send("explore-vertical", { y: 0 })} onLostPointerCapture={() => send("explore-vertical", { y: 0 })}>↑</button>
           <button className="ocean-movement-roll-left" aria-label="Ruota a sinistra" onClick={() => send("explore-roll-step", { direction: -1 })}>↶</button><button className="ocean-movement-roll-right" aria-label="Ruota a destra" onClick={() => send("explore-roll-step", { direction: 1 })}>↷</button>
         </div>
+        </>}
       </>}
     </main>
   );

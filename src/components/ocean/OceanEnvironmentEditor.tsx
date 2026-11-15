@@ -12,17 +12,19 @@ const ranges: { key: keyof OceanEnvironmentSettings; label: string; min: number;
   { key: "floorGlowRadius", label: "Raggio luce sul fondo", min: 40, max: 400, step: 10 },
 ];
 export default function OceanEnvironmentEditor() {
-  const { editing, isAdmin, draft, update } = useInlineSiteEditing();
+  const { editing, isAdmin, draft, update, saving } = useInlineSiteEditing();
   const session = useAdminSession();
   if (!editing || !isAdmin || !session.user || !session.isAdmin || session.loading) return null;
   const environment = normalizeOceanEnvironment(draft.ocean_environment);
   const change = (key: keyof OceanEnvironmentSettings, value: string | number) => update({ ocean_environment: normalizeOceanEnvironment({ ...environment, [key]: value }) });
-  return <aside className="ocean-environment-editor" data-ocean-control data-inline-editor aria-label="Modifica mare e sole">
-    <p>Mare e sole</p>
+  return <details className="ocean-environment-editor" data-ocean-control data-inline-editor aria-label="Modifica mare e sole">
+    <summary>Mare e sole</summary>
+    <div className="ocean-environment-fields">
     <div className="ocean-environment-colors">{([
       ["shallowColor", "Colore vicino"], ["waterColor", "Oltremare lontano"], ["floorGlowColor", "Luce sul fondo"],
-    ] as const).map(([key, label]) => <label key={key}><span>{label}</span><input type="color" aria-label={label} value={environment[key]} onChange={(event) => change(key, event.target.value)} /></label>)}</div>
-    {ranges.map(({ key, label, min, max, step }) => <label key={key} className="ocean-environment-range"><span>{label}</span><output>{Number(environment[key]).toFixed(step < 1 ? 2 : 0)}</output><input type="range" aria-label={label} min={min} max={max} step={step} value={environment[key]} onChange={(event) => change(key, Number(event.target.value))} /></label>)}
+    ] as const).map(([key, label]) => <label key={key}><span>{label}</span><input type="color" aria-label={label} value={environment[key]} disabled={saving} onChange={(event) => change(key, event.target.value)} /></label>)}</div>
+    {ranges.map(({ key, label, min, max, step }) => <label key={key} className="ocean-environment-range"><span>{label}</span><output>{Number(environment[key]).toFixed(step < 1 ? 2 : 0)}</output><input type="range" aria-label={label} min={min} max={max} step={step} value={environment[key]} disabled={saving} onChange={(event) => change(key, Number(event.target.value))} /></label>)}
     <small>Anteprima in tempo reale · usa Salva o Annulla della matita.</small>
-  </aside>;
+    </div>
+  </details>;
 }

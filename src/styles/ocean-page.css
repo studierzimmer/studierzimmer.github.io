@@ -9,7 +9,31 @@
 .ocean-page button { appearance:none; border:0; border-radius:999px; padding:12px; background:transparent; font:inherit; color:inherit; min-height:44px; -webkit-tap-highlight-color:transparent; }
 .ocean-page button:active { background:transparent; box-shadow:none; }
 .ocean-intro.is-closing .ocean-intro-content { animation:portfolio-blossom-in 760ms cubic-bezier(.22,.88,.3,1) reverse both; }
-.ocean-intro-content input,.ocean-intro-content textarea { display:block; background:#fff8; border:0; border-bottom:1px dotted #747b80; border-radius:0; width:100%; padding:10px; font:inherit; text-align:inherit; margin-top:8px; resize:vertical; }
+.ocean-inline-text { position:relative; display:grid; width:100%; min-width:0; max-width:100%; pointer-events:auto; font:inherit; color:inherit; text-align:inherit; letter-spacing:inherit; line-height:inherit; }
+.ocean-inline-text-measure,.ocean-inline-text > input,.ocean-inline-text > textarea { grid-area:1 / 1; min-width:0; margin:0; padding:3px 0; font:inherit; color:inherit; text-align:inherit; letter-spacing:inherit; line-height:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
+.ocean-inline-text-measure { visibility:hidden; pointer-events:none; }
+.ocean-inline-text > input,.ocean-inline-text > textarea { display:block; width:100%; height:100%; border:0; border-bottom:1px dotted currentColor; border-radius:0; background:transparent; outline:none; resize:none; box-shadow:none; user-select:text; -webkit-user-select:text; touch-action:manipulation; }
+.ocean-inline-text > input:focus,.ocean-inline-text > textarea:focus { border-bottom-style:solid; }
+.ocean-inline-text > input::placeholder,.ocean-inline-text > textarea::placeholder { opacity:.45; color:inherit; }
+.ocean-inline-text > :disabled { cursor:wait; opacity:.55; }
+.ocean-inline-text.is-action { display:inline-grid; width:auto; max-width:100%; min-height:44px; padding:12px; }
+.ocean-inline-text.is-action .ocean-inline-text-measure { white-space:pre; }
+.ocean-inline-text.is-action > input { width:0; min-width:100%; }
+.ocean-inline-text.is-multiline { max-height:25dvh; grid-template-rows:minmax(0,1fr); overflow:hidden; }
+.ocean-inline-text.is-multiline > * { min-height:0; }
+.ocean-inline-text.is-multiline > textarea { overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; }
+.ocean-intro-content .ocean-edit-hint { margin-top:20px; font-size:10px; line-height:1.5; opacity:.65; }
+.ocean-page.is-editing .ocean-intro { inset:145px 0 180px; align-items:flex-start; padding:12px 24px; }
+.ocean-page.is-editing .ocean-intro-content { max-height:100%; }
+.ocean-page.is-editing .ocean-intro-actions { gap:clamp(3px,3vw,18px); flex-wrap:wrap; }
+.ocean-page.is-editing .ocean-tools { bottom:max(100px,calc(env(safe-area-inset-bottom) + 90px)); max-width:calc(100vw - 44px); flex-direction:row; flex-wrap:wrap; justify-content:flex-end; }
+@media(max-width:600px) { .ocean-inline-text > input,.ocean-inline-text > textarea { font-size:16px; } .ocean-inline-text-measure { font-size:16px; } }
+@media(max-height:600px) {
+  .ocean-page.is-editing .ocean-intro { inset:68px 0 155px; padding:0 16px; }
+  .ocean-page.is-editing .ocean-intro-content { padding:8px 16px; }
+  .ocean-page.is-editing .ocean-tools { bottom:82px; }
+  .ocean-page.is-editing .ocean-environment-editor { top:12px; right:12px; width:min(240px,calc(100vw - 80px)); max-height:calc(100dvh - 110px); }
+}
 .ocean-about-reveal { overflow:hidden; }
 .ocean-about-measure { padding-top:24px; }
 .ocean-about { font-size:14px; transform-origin:center; }

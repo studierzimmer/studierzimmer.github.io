@@ -1,4 +1,7 @@
-.ocean-environment-editor { position:fixed; z-index:4; top:max(88px,calc(env(safe-area-inset-top) + 74px)); right:max(20px,env(safe-area-inset-right)); width:min(320px,calc(100vw - 40px)); max-height:calc(100dvh - 270px); overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; pointer-events:auto; background:rgb(234 239 239 / .88); color:#293c44; padding:18px; font-size:11px; backdrop-filter:blur(12px); }
+.ocean-environment-editor { position:fixed; z-index:4; top:max(88px,calc(env(safe-area-inset-top) + 74px)); right:max(20px,env(safe-area-inset-right)); width:min(320px,calc(100vw - 40px)); max-height:calc(100dvh - 270px); overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; pointer-events:auto; background:rgb(234 239 239 / .88); color:#293c44; padding:0; font-size:11px; backdrop-filter:blur(12px); }
+.ocean-environment-editor summary { min-height:44px; padding:14px 18px; cursor:pointer; letter-spacing:.05em; }
+.ocean-environment-editor summary:focus-visible { outline:1px solid currentColor; outline-offset:-4px; }
+.ocean-environment-fields { padding:0 18px 18px; }
 .ocean-environment-editor p { margin:0 0 15px; letter-spacing:.05em; }
 .ocean-environment-colors { display:flex; gap:12px; margin-bottom:10px; }
 .ocean-environment-colors label { flex:1; min-width:0; font-size:10px; }

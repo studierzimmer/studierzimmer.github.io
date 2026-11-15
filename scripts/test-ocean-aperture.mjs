@@ -66,6 +66,7 @@ for (const time of [1900, 3000, 3660, 4140, 4500]) {
 assert.match(source, /element\.animate\(oceanRevealFrames, oceanRevealTiming\)/);
 assert.match(source, /if \(!exitingRef\.current && animation\.playbackRate > 0\) setReady\(true\)/);
 assert.match(source, /animation\.playbackRate = Math\.abs\(animation\.playbackRate \|\| 1\)/);
-assert.equal((source.match(/>Exit<\/button>/g) ?? []).length, 2, "Ocean intro and exploration alone use the requested Exit label");
+assert.equal((source.match(/>\{labels\.exit\}<\/button>/g) ?? []).length, 2, "Ocean intro and exploration share the configurable Exit label");
+assert.match(fs.readFileSync(new URL("../src/types/oceanText.ts", import.meta.url), "utf8"), /exit:\s*"Exit"/, "the approved Exit default remains unchanged while labels become editable");
 assert.doesNotMatch(source.slice(source.indexOf("const oceanRevealFrames"), source.indexOf("export default")), /opacity|fade/);
 console.log("PASS: historical 3s + 1.5s anticipation, per-segment easing, medium/pinch/full/hold timings, pose-preserving symmetric reverse, no blank exit delay, retarget/cancel guards and Ocean-only Exit labels (no browser/network).");

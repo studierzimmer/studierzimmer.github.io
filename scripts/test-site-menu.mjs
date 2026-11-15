@@ -11,12 +11,14 @@ function compile(source, require = () => { throw new Error("Unexpected dependenc
 }
 const helpers = compile(fs.readFileSync(new URL("../src/lib/siteMenu.ts", import.meta.url), "utf8"));
 const ocean = compile(fs.readFileSync(new URL("../src/types/oceanEnvironment.ts", import.meta.url), "utf8"));
+const oceanText = compile(fs.readFileSync(new URL("../src/types/oceanText.ts", import.meta.url), "utf8"));
 let repository = fs.readFileSync(new URL("../src/services/siteContentRepository.ts", import.meta.url), "utf8");
 repository = repository.replaceAll("import.meta.env.VITE_SITE_CONTENT_MODE", '"local"').replaceAll("import.meta.env.DEV", "true");
 const api = compile(`${repository}\nexport { normalizeSettings };`, (id) => {
   if (id === "@/lib/supabase") return { supabase: {} };
   if (id === "@/lib/siteMenu") return helpers;
   if (id === "@/types/oceanEnvironment") return ocean;
+  if (id === "@/types/oceanText") return oceanText;
   throw new Error(`Unexpected dependency ${id}`);
 });
 const defaults = api.DEFAULT_SITE_SETTINGS.menu_items;

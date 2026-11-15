@@ -157,6 +157,13 @@ gestures through while controls, editing and privacy choices remain interactive.
 Logged-in administrators can adjust water, sun and floor glow through the
 inline pencil, using the existing Save/Cancel workflow. These settings live in
 the existing `site_settings` JSON payload and need no additional SQL migration.
+Ocean's title, subtitle, About copy and Exit/start/about/figure/music labels
+are editable directly in place after administrator login, including after
+Start. Editing pauses movement and replaces actions with native text fields;
+Save/Cancel restores exploration. Figure loading/error messages are editable
+in the backend. All labels use the same existing settings JSON; intentional
+empty text is preserved. The optional water/sun controls collapse so they do
+not obstruct text editing on small screens.
 Physical-device GPU validation is still
 needed; these changes do not reduce model/image quality.
 
@@ -178,6 +185,7 @@ node scripts/test-route-preparation.mjs
 node scripts/test-ocean-surface.mjs
 node scripts/test-ocean-aperture.mjs
 node scripts/test-ocean-environment.mjs
+node scripts/test-ocean-text.mjs
 node scripts/test-gallery-performance.mjs
 node scripts/test-watch-visibility.mjs
 node scripts/test-public-route-lifecycle.mjs
@@ -270,4 +278,5 @@ The source lives on `main`. The compiled site is published to `gh-pages`:
 npm run deploy
 ```
 
-Live site: https://studierzimmer.github.io
+Live site: https://www.studierzimmer.ch (the GitHub Pages URL redirects here).
+Keep `public/CNAME` in the build so deployments preserve the existing custom domain.

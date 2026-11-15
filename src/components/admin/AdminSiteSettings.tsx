@@ -5,6 +5,7 @@ import { useSiteContent } from "@/hooks/useSiteContent";
 import { DEFAULT_SITE_SETTINGS, LOCAL_CONTENT_MODE, uploadSiteAsset } from "@/services/siteContentRepository";
 import type { MenuKey, SiteSettings } from "@/types/siteContent";
 import { moveMenuItem } from "@/lib/siteMenu";
+import { DEFAULT_OCEAN_LABELS, normalizeOceanLabels, type OceanLabels } from "@/types/oceanText";
 
 interface AdminSiteSettingsProps {
   section?: "menu" | "bio" | "splash" | "models" | "navigate";
@@ -18,6 +19,15 @@ const sectionOptions = [
   { id: "splash", label: "Logo" },
   { id: "navigate", label: "Navigate" },
 ] as const;
+const oceanLabelFields: Array<{ key: keyof OceanLabels; label: string; multiline?: boolean }> = [
+  { key: "exit", label: "Pulsante di uscita" },
+  { key: "start", label: "Pulsante di avvio" },
+  { key: "about", label: "Pulsante informazioni" },
+  { key: "figure", label: "Selezione figura" },
+  { key: "music", label: "Pulsante musica" },
+  { key: "loadingFigures", label: "Messaggio di caricamento figure" },
+  { key: "figuresUnavailable", label: "Messaggio catalogo non disponibile", multiline: true },
+];
 
 function SettingsDisclosure({ label, children }: { label: string; children: ReactNode }) {
   return <details className="group border-y border-black/10">
@@ -109,6 +119,12 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
     setFeedback(null);
     setFailure(null);
   };
+  const updateOceanLabel = (key: keyof OceanLabels, value: string) => {
+    setDraft((current) => ({ ...current, ocean_labels: { ...normalizeOceanLabels(current.ocean_labels), [key]: value } }));
+    setDirty(true);
+    setFeedback(null);
+    setFailure(null);
+  };
   const upload = async (file: File | undefined, target: "splash" | MenuKey) => {
     if (!file) return;
     setUploading(target);
@@ -138,6 +154,7 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
   };
   const selectedSection = section ?? activeSection;
   const show = (key: AdminSiteSettingsProps["section"]) => selectedSection === key;
+  const oceanLabels = normalizeOceanLabels(draft.ocean_labels);
 
   return (
     <div className="admin-site-settings mx-auto w-full max-w-2xl text-left text-black">
@@ -238,6 +255,18 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
           <label className="block text-[12px] text-black/60">Testo informativo
             <textarea rows={5} className={`${inputClass} mt-2 max-h-[45dvh] min-h-32 resize-y leading-relaxed`} value={draft.ocean_about ?? ""} onChange={(event) => update({ ocean_about: event.target.value })} />
           </label>
+          <SettingsDisclosure label="Pulsanti e messaggi di Navigate">
+            <p className="text-[12px] leading-relaxed text-black/55">Modifica le scritte dei comandi e i messaggi visibili ai visitatori. Un campo lasciato vuoto resta vuoto.</p>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+              {oceanLabelFields.map((field) => <label key={field.key} className={`block min-w-0 text-[12px] text-black/60 ${field.multiline ? "sm:col-span-2" : ""}`}>
+                {field.label}
+                {field.multiline
+                  ? <textarea rows={3} className={`${inputClass} mt-1 resize-y leading-relaxed`} aria-label={field.label} value={oceanLabels[field.key]} onChange={(event) => updateOceanLabel(field.key, event.target.value)} />
+                  : <input className={`${inputClass} mt-1`} aria-label={field.label} value={oceanLabels[field.key]} onChange={(event) => updateOceanLabel(field.key, event.target.value)} />}
+              </label>)}
+            </div>
+            <button type="button" className={`${buttonClass} w-full text-black/50 sm:w-auto`} onClick={() => update({ ocean_labels: { ...DEFAULT_OCEAN_LABELS } })}>Ripristina scritte originali</button>
+          </SettingsDisclosure>
           <SettingsDisclosure label="Colori del testo e dello sfondo">
           <div className="grid grid-cols-2 gap-4">
             <div>

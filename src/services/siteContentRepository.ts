@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { orderedMenuDefaults } from "@/lib/siteMenu";
 import { normalizeOceanEnvironment } from "@/types/oceanEnvironment";
+import { normalizeOceanLabels } from "@/types/oceanText";
 import type {
   ArtworkItem,
   ContentSource,
@@ -66,6 +67,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   ocean_text_color: null,
   ocean_background_color: null,
   ocean_environment: normalizeOceanEnvironment(),
+  ocean_labels: normalizeOceanLabels(),
 };
 
 interface ContentStatus {
@@ -218,6 +220,7 @@ function normalizeSettings(value: Partial<SiteSettings> | null | undefined): Sit
     ocean_text_color: nullableColor(input.ocean_text_color),
     ocean_background_color: nullableColor(input.ocean_background_color),
     ocean_environment: normalizeOceanEnvironment(input.ocean_environment),
+    ocean_labels: normalizeOceanLabels(input.ocean_labels),
   };
 }
 
