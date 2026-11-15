@@ -9,7 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree, type RootState } from "@react-three/fiber";
 import {
   EffectComposer,
   HueSaturation,
@@ -51,11 +51,20 @@ import { useAdminSession } from "@/hooks/useAdminSession";
 import { listPublishedThreeDModels } from "@/services/threeDModelRepository";
 import type { ThreeDModel } from "@/types/threeDModels";
 import ScrambleText from "@/components/navigation/ScrambleText";
+import SectionNavigation from "@/components/navigation/SectionNavigation";
+import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditControl";
+import { updateThreeDModel } from "@/services/threeDModelRepository";
+import { useSiteContent } from "@/hooks/useSiteContent";
+import { modelCategoryFor } from "@/lib/modelCategories";
+import type { ModelCategory } from "@/types/siteContent";
+import { createCameraReturn, type CameraReturnHandle } from "@/components/artworks/cameraReturn";
 
 interface WatchStudioProps {
   onBack: () => void;
   onNavigate: () => void;
   onLogin: () => void;
+  category?: ModelCategory;
+  initialModelId?: string;
 }
 
 const DEFAULT_WATCH_URL = `${import.meta.env.BASE_URL}models/watch-v1.glb`;
@@ -72,6 +81,49 @@ const MODEL_GROW_DURATION = 940;
 const MODEL_CATALOG_CACHE_DURATION = 12 * 60 * 1000;
 const NAV_IDLE_DELAY = 1400;
 const NAV_REVEAL_THRESHOLD = 44;
+
+function isWatchDocumentVisible(): boolean {
+  return typeof document === "undefined" || (!document.hidden && document.visibilityState !== "hidden");
+}
+
+function setWatchFrameloop(state: RootState | null, active: boolean, elapsed: { current: number }): void {
+  const current = state?.get();
+  const mode = active ? "always" : "never";
+  if (!current || current.frameloop === mode) return;
+  if (!active) elapsed.current = current.clock.elapsedTime;
+  current.setFrameloop(mode);
+  // R3F resets the clock whenever its loop changes. Restore the active phase
+  // while excluding hidden time, rather than restarting clips on tab return.
+  current.clock.elapsedTime = elapsed.current;
+  if (active) current.invalidate();
+}
+
+function useWatchDocumentRendering() {
+  const [active, setActive] = useState(isWatchDocumentVisible);
+  const renderState = useRef<RootState | null>(null);
+  const elapsed = useRef(0);
+  const syncActivity = useRef<() => void>(() => undefined);
+  useLayoutEffect(() => {
+    const sync = () => {
+      const visible = isWatchDocumentVisible();
+      setWatchFrameloop(renderState.current, visible, elapsed);
+      setActive(visible);
+    };
+    syncActivity.current = sync;
+    document.addEventListener("visibilitychange", sync);
+    sync();
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      syncActivity.current = () => undefined;
+      setWatchFrameloop(renderState.current, false, elapsed);
+    };
+  }, []);
+  const onCreated = useCallback((state: RootState) => {
+    renderState.current = state;
+    syncActivity.current();
+  }, []);
+  return { active, onCreated };
+}
 
 const RENDER_MODES: Array<{ id: RenderMode; label: string }> = [
   { id: "pbr", label: "RENDER" },
@@ -240,8 +292,8 @@ const watchStudioStyles = `
 }
 
 .watch-primary-nav-column:focus-visible > span {
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  outline: 1px solid currentColor;
+  outline-offset: 4px;
 }
 
 .watch-primary-nav-column.is-active > span {
@@ -533,6 +585,23 @@ const watchStudioStyles = `
   color: black;
 }
 
+/* One scale choreography, with a mirrored exit and no image dissolves. */
+@keyframes watch-elastic-scale {
+  0% { transform:scale(0); } 48% { transform:scale(1.075); }
+  66% { transform:scale(.97); } 80% { transform:scale(1.018); }
+  91% { transform:scale(.994); } 100% { transform:scale(1); }
+}
+.watch-studio,.watch-studio.is-visible,.watch-studio.is-leaving { opacity:1; filter:none; transition:background-color 700ms ease; }
+.watch-model-stage { opacity:1 !important; }
+.watch-model-stage.is-outside { transform:scale(0); }
+.watch-model-stage.is-entering,.watch-model-stage.is-leaving,.watch-studio-piece.is-entering,.watch-studio-piece.is-leaving { animation-name:watch-elastic-scale; }
+.watch-info-drawer { opacity:1; transform:scale(0); transform-origin:90% 20%; background:#f3f4f3; transition:transform 720ms cubic-bezier(.22,1.1,.3,1); }
+.watch-info-drawer.is-open { transform:scale(1); }
+.watch-model-drawer { opacity:1; transform:translate3d(0,104%,0); background:#f3f4f3; transition:transform 720ms cubic-bezier(.22,1.1,.3,1); will-change:transform; }
+.watch-model-drawer.is-open { transform:translate3d(0,0,0); }
+.watch-info-piece,.watch-model-list-item { opacity:1; transform:scale(0); transition:transform 650ms cubic-bezier(.22,1.1,.3,1); }
+.watch-info-drawer.is-open .watch-info-piece,.watch-model-drawer.is-open .watch-model-list-item { transform:scale(1); }
+
 @media (prefers-reduced-motion: reduce) {
   .watch-studio,
   .watch-studio-piece,
@@ -623,14 +692,18 @@ function ModelLoadingOverlay({
     if (!complete || displayedProgress < 100 || completedRef.current) return;
 
     completedRef.current = true;
-    onCompleted();
-
-    const fadeTimeout = window.setTimeout(() => setExiting(true), 120);
-    const hideTimeout = window.setTimeout(() => setVisible(false), 680);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const exitTimeout = window.setTimeout(() => setExiting(true), reducedMotion ? 0 : 120);
+    const revealTimeout = window.setTimeout(() => {
+      // Remove the opaque loader before starting the model's single entrance.
+      // Growing behind a fading white cover used to reveal it halfway through.
+      setVisible(false);
+      onCompleted();
+    }, reducedMotion ? 1 : 440);
 
     return () => {
-      window.clearTimeout(fadeTimeout);
-      window.clearTimeout(hideTimeout);
+      window.clearTimeout(exitTimeout);
+      window.clearTimeout(revealTimeout);
     };
   }, [complete, displayedProgress, onCompleted]);
 
@@ -641,11 +714,12 @@ function ModelLoadingOverlay({
   return (
     <div
       data-model-loading-overlay="true"
-      className={`pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-white px-8 transition-opacity duration-500 ${
-        exiting ? "opacity-0" : "opacity-100"
-      }`}
+      className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-white px-8"
     >
-      <div className="w-full max-w-[260px] bg-white px-5 py-4 text-black">
+      <div
+        className="w-full max-w-[260px] bg-transparent px-5 py-4 text-black transition-transform duration-300 motion-reduce:duration-0"
+        style={{ transform: `scale(${exiting ? 0 : 1})`, transitionTimingFunction: "cubic-bezier(.22,.88,.3,1)" }}
+      >
         <div className="mb-3 flex items-center justify-between text-[10px] tracking-[0.14em]">
           <span>...</span>
           <span className="tabular-nums">{roundedProgress}%</span>
@@ -1130,11 +1204,16 @@ function ModelCommitReady({
 function ResetModelCamera({
   modelKey,
   controlsRef,
+  returnRef,
+  onReturning,
 }: {
   modelKey: string;
   controlsRef: React.RefObject<OrbitControlsImpl>;
+  returnRef: React.MutableRefObject<CameraReturnHandle | null>;
+  onReturning: (busy: boolean) => void;
 }) {
   const camera = useThree((state) => state.camera);
+  const controller = useRef<CameraReturnHandle | null>(null);
 
   useLayoutEffect(() => {
     camera.position.set(...CAMERA_POSITION);
@@ -1148,8 +1227,17 @@ function ResetModelCamera({
       controls.target.set(0, 0, 0);
       controls.update();
       controls.saveState();
+      const owned = createCameraReturn(camera, controls, CAMERA_POSITION, onReturning, () => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      controller.current = owned;
+      returnRef.current = owned;
+      return () => {
+        owned.dispose();
+        if (returnRef.current === owned) returnRef.current = null;
+        if (controller.current === owned) controller.current = null;
+      };
     }
-  }, [camera, controlsRef, modelKey]);
+  }, [camera, controlsRef, modelKey, onReturning, returnRef]);
+  useFrame((_, delta) => controller.current?.tick(delta));
 
   return null;
 }
@@ -1194,12 +1282,24 @@ export default function WatchStudio({
   onBack,
   onNavigate,
   onLogin,
+  category,
+  initialModelId,
 }: WatchStudioProps) {
+  const documentRendering = useWatchDocumentRendering();
+  const { settings } = useSiteContent();
+  const { editing, saving: inlineSaving, registerFields } = useInlineSiteEditing();
+  const [modelInfoDrafts, setModelInfoDrafts] = useState<Record<string, {
+    name: string;
+    description: string;
+    originalName: string;
+    originalDescription: string;
+  }>>({});
   const [entered, setEntered] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [catalogReady, setCatalogReady] = useState(false);
-  const [models, setModels] = useState<ThreeDModel[]>([DEFAULT_MODEL]);
-  const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL.id);
+  const [catalogModels, setModels] = useState<ThreeDModel[]>([DEFAULT_MODEL]);
+  const models = useMemo(() => category ? catalogModels.filter((model) => modelCategoryFor(model, settings.model_categories) === category) : catalogModels, [catalogModels, category, settings.model_categories]);
+  const [selectedModelId, setSelectedModelId] = useState(initialModelId ?? DEFAULT_MODEL.id);
   const [renderMode, setRenderMode] = useState<RenderMode>("pbr");
   const [managerOpen, setManagerOpen] = useState(false);
   const [modelListOpen, setModelListOpen] = useState(false);
@@ -1213,11 +1313,32 @@ export default function WatchStudio({
   >(null);
   const [activeNavId, setActiveNavId] = useState("models");
   const [modelMotion, setModelMotion] = useState<ModelMotion>("outside");
-  const [modelGeometryReady, setModelGeometryReady] = useState(false);
-  const [modelSceneReady, setModelSceneReady] = useState(false);
-  const [modelLoadError, setModelLoadError] = useState(false);
+  const [geometryReadyKey, setGeometryReadyKey] = useState<string | null>(null);
+  const [sceneReadyKey, setSceneReadyKey] = useState<string | null>(null);
+  const [loadErrorKey, setLoadErrorKey] = useState<string | null>(null);
   const [modelListNotice, setModelListNotice] = useState<string | null>(null);
   const controlsRef = useRef<OrbitControlsImpl>(null);
+  const cameraReturnRef = useRef<CameraReturnHandle | null>(null);
+  const [cameraReturning, setCameraReturning] = useState(false);
+  const commandEpoch = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    const prepareExit = (event: Event) => {
+      const epoch = ++commandEpoch.current;
+      const preparation = (cameraReturnRef.current?.restore() ?? Promise.resolve(true)).then((complete) => {
+        if (complete && mounted.current && epoch === commandEpoch.current) {
+          setModelListOpen(false); setInfoOpen(false); setManagerOpen(false);
+        }
+      });
+      (event as CustomEvent<{ waitUntil: (promise: Promise<unknown>) => void }>).detail.waitUntil(preparation);
+    };
+    const cancelExit = () => { commandEpoch.current++; cameraReturnRef.current?.cancel(); };
+    window.addEventListener("portfolio:before-exit", prepareExit);
+    window.addEventListener("portfolio:before-exit-cancel", cancelExit);
+    return () => { mounted.current = false; cancelExit(); window.removeEventListener("portfolio:before-exit", prepareExit); window.removeEventListener("portfolio:before-exit-cancel", cancelExit); };
+  }, []);
   const pendingModelIdRef = useRef<string | null>(null);
   const modelSwitchTimerRef = useRef<number | null>(null);
   const modelVisibleTimerRef = useRef<number | null>(null);
@@ -1234,11 +1355,87 @@ export default function WatchStudio({
   const loadingProgress = useProgress();
   const { isAdmin } = useAdminSession();
 
+  useEffect(() => { setInfoOpen(editing); }, [editing]);
+
   const selectedModel =
     models.find((model) => model.id === selectedModelId) ?? models[0] ?? DEFAULT_MODEL;
+  const selectedInfoDraft = modelInfoDrafts[selectedModel.id];
+  const canEditModelInfo = editing && selectedModel.id !== DEFAULT_MODEL.id;
+
+  useEffect(() => {
+    if (editing) setInfoOpen(true);
+    else setModelInfoDrafts({});
+  }, [editing, selectedModel.id]);
+
+  const stageModelInfo = (patch: { name?: string; description?: string }) => {
+    if (!canEditModelInfo || inlineSaving) return;
+    const modelId = selectedModel.id;
+    setModelInfoDrafts((current) => ({
+      ...current,
+      [modelId]: {
+        ...(current[modelId] ?? {
+          name: selectedModel.name,
+          description: selectedModel.description,
+          originalName: selectedModel.name,
+          originalDescription: selectedModel.description,
+        }),
+        ...patch,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    const hasChanges = (draft: (typeof modelInfoDrafts)[string]) =>
+      draft.name.trim() !== draft.originalName || draft.description !== draft.originalDescription;
+    return registerFields("model-info", {
+      isDirty: () => Object.values(modelInfoDrafts).some(hasChanges),
+      cancel: () => setModelInfoDrafts({}),
+      save: async () => {
+        const changed = Object.entries(modelInfoDrafts).filter(([, draft]) => hasChanges(draft));
+        if (changed.some(([, draft]) => !draft.name.trim())) {
+          throw new Error("Inserisci un nome per ogni modello modificato.");
+        }
+        for (const [modelId, draft] of changed) {
+          const saved = await updateThreeDModel(modelId, { name: draft.name.trim(), description: draft.description });
+          const metadata = { name: saved.name, description: saved.description };
+          // Only metadata changes; preserve the active signed model URL so saving
+          // text does not reload geometry or restart its entrance animation.
+          setModels((current) => current.map((model) => model.id === modelId ? { ...model, ...metadata } : model));
+          if (publicModelCatalogCache) {
+            publicModelCatalogCache = {
+              ...publicModelCatalogCache,
+              models: publicModelCatalogCache.models.map((model) => model.id === modelId ? { ...model, ...metadata } : model),
+            };
+          }
+          setModelInfoDrafts((current) => {
+            const next = { ...current };
+            if (next[modelId] === draft) delete next[modelId];
+            return next;
+          });
+        }
+      },
+    });
+  }, [editing, modelInfoDrafts, registerFields]);
+
   const selectedModelIsStl = isStlModel(selectedModel);
   const selectedEnvironmentUrl = environmentUrlFor(selectedModel);
-  const modelReadinessKey = `${selectedModel.public_url}|${selectedEnvironmentUrl}`;
+  const modelReadinessKey = `${selectedModel.id}|${selectedModel.public_url}|${selectedEnvironmentUrl}`;
+  const modelGeometryReady = geometryReadyKey === modelReadinessKey;
+  const modelSceneReady = sceneReadyKey === modelReadinessKey;
+  const modelLoadError = loadErrorKey === modelReadinessKey;
+  const previousModelReadinessKey = useRef(modelReadinessKey);
+  useLayoutEffect(() => {
+    if (previousModelReadinessKey.current === modelReadinessKey) return;
+    previousModelReadinessKey.current = modelReadinessKey;
+    if (modelVisibleTimerRef.current) {
+      window.clearTimeout(modelVisibleTimerRef.current);
+      modelVisibleTimerRef.current = null;
+    }
+    // Catalog/metadata refreshes with the same asset must not fold a model
+    // whose already-completed loader will never emit another completion.
+    setModelMotion("outside");
+  }, [modelReadinessKey]);
   const sceneMode = renderMode;
   const canAutoHideNav =
     entered &&
@@ -1279,11 +1476,6 @@ export default function WatchStudio({
   }, [clearNavIdleTimer]);
 
   const loadModels = useCallback(async (forceRefresh = false) => {
-    setModelGeometryReady(false);
-    setModelSceneReady(false);
-    setModelLoadError(false);
-    setModelMotion("outside");
-
     try {
       const remoteModels = await loadPublicModelCatalog(forceRefresh);
       const nextModels = availableModels(remoteModels);
@@ -1298,7 +1490,7 @@ export default function WatchStudio({
     } catch {
       setModels([DEFAULT_MODEL]);
       setSelectedModelId(DEFAULT_MODEL.id);
-      setModelListNotice("Using the built-in watch until the Supabase 3D table is ready.");
+      setModelListNotice("Supabase non è raggiungibile. È disponibile solo l’orologio incluso nel progetto.");
       setCatalogReady(true);
     }
   }, []);
@@ -1448,16 +1640,16 @@ export default function WatchStudio({
   const handleModelGeometryReady = useCallback(
     (modelId: string) => {
       if (modelId === selectedModel.id) {
-        setModelGeometryReady(true);
+        setGeometryReadyKey(modelReadinessKey);
       }
     },
-    [selectedModel.id]
+    [modelReadinessKey, selectedModel.id]
   );
 
   const handleSceneReady = useCallback(
     (readinessKey: string) => {
       if (readinessKey === modelReadinessKey) {
-        setModelSceneReady(true);
+        setSceneReadyKey(readinessKey);
       }
     },
     [modelReadinessKey]
@@ -1480,7 +1672,7 @@ export default function WatchStudio({
     }, MODEL_GROW_DURATION);
   }, []);
 
-  const handleModelSelect = useCallback(
+  const selectRestoredModel = useCallback(
     (modelId: string) => {
       setModelListOpen(false);
 
@@ -1495,10 +1687,13 @@ export default function WatchStudio({
 
         if (!nextModelId) return;
 
-        setModelGeometryReady(false);
-        setModelSceneReady(false);
-        setModelLoadError(false);
         setModelMotion("outside");
+        if (nextModelId === selectedModel.id) {
+          // A second tap can cancel a pending switch back to the current
+          // asset. Its loader is already gone, so resume without reloading.
+          handleModelFullyLoaded();
+          return;
+        }
         setSelectedModelId(nextModelId);
       };
 
@@ -1520,22 +1715,28 @@ export default function WatchStudio({
         MODEL_SHRINK_DURATION
       );
     },
-    [modelMotion, selectedModel.id]
+    [handleModelFullyLoaded, modelMotion, selectedModel.id]
   );
+
+  const handleModelSelect = useCallback((modelId: string) => {
+    const epoch = ++commandEpoch.current;
+    void (cameraReturnRef.current?.restore() ?? Promise.resolve(true)).then((complete) => {
+      if (complete && mounted.current && epoch === commandEpoch.current) selectRestoredModel(modelId);
+    });
+  }, [selectRestoredModel]);
 
   const leaveTo = (
     destination: () => void,
     target: "library" | "other" = "other"
   ) => {
     if (leaving) return;
-    setInfoOpen(false);
-    setModelListOpen(false);
-    setManagerOpen(false);
-    setNavHidden(false);
-    setNavTransitionTarget(target);
-    setModelMotion("leaving");
-    setLeaving(true);
-    window.setTimeout(destination, 900);
+    const epoch = ++commandEpoch.current;
+    void (cameraReturnRef.current?.restore() ?? Promise.resolve(true)).then((complete) => {
+      if (!complete || !mounted.current || epoch !== commandEpoch.current) return;
+      setInfoOpen(false); setModelListOpen(false); setManagerOpen(false);
+      setNavHidden(false); setNavTransitionTarget(target); setModelMotion("leaving"); setLeaving(true);
+      window.setTimeout(() => { if (mounted.current && epoch === commandEpoch.current) destination(); }, 900);
+    });
   };
 
   const handleBack = () => {
@@ -1621,7 +1822,7 @@ export default function WatchStudio({
   const primaryNavItems = [
     {
       id: "navigate",
-      label: "NAVIGATE",
+      label: "OCEAN",
       action: () => leaveTo(onNavigate),
       event: "navigation_click",
       type: "navigation",
@@ -1629,7 +1830,7 @@ export default function WatchStudio({
     },
     {
       id: "library",
-      label: "LIBRARY",
+      label: "MENU",
       action: handleBack,
       event: "navigation_click",
       type: "navigation",
@@ -1645,7 +1846,7 @@ export default function WatchStudio({
     },
     {
       id: "models",
-      label: "MODELS",
+      label: (category ? settings.menu_items.find((item) => item.id === category)?.label : null) ?? "MODELS",
       action: () => {
         const viewerAlreadyClear =
           !managerOpen && !modelListOpen && !infoOpen;
@@ -1689,118 +1890,24 @@ export default function WatchStudio({
       : []),
   ];
 
+  if (catalogReady && (models.length === 0 || (initialModelId && !catalogModels.some((model) => model.id === initialModelId)))) {
+    return (
+      <main className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-5 bg-white px-8 text-center text-black">
+        <SectionNavigation section={category ?? "models"} onIndex={onBack} />
+        <p data-blossom className="blossom">{initialModelId ? "Questo modello non è attualmente disponibile." : `Nessun oggetto pubblicato in ${settings.menu_items.find((item) => item.id === category)?.label ?? category}.`}</p>
+        {modelListNotice && <p className="max-w-sm text-xs leading-relaxed text-black/50">{modelListNotice}</p>}
+        <button className="border-b border-black/40 py-2 text-xs" onClick={() => void loadModels(true)}>Riprova</button>
+        {isAdmin && <button className="text-xs" onClick={onLogin}>Gestisci i modelli</button>}
+      </main>
+    );
+  }
+
   return (
     <>
       <style>{watchStudioStyles}</style>
 
-      <div
-        className={`watch-primary-nav-shell ${navHidden ? "is-hidden" : ""}`}
-        aria-hidden={navHidden}
-      >
-        <div className="watch-primary-nav">
-          {primaryNavItems.map((item, index) => {
-            const staysInLibrary =
-              item.id === "navigate" ||
-              item.id === "library" ||
-              item.id === "login" ||
-              item.id === "models";
-            const itemMotion =
-              leaving &&
-              (navTransitionTarget !== "library" || !staysInLibrary)
-                ? "is-leaving"
-                : "is-visible";
-
-            return (
-              <div
-                key={item.id}
-                className={`watch-studio-piece ${itemMotion}`}
-                style={
-                  {
-                    "--watch-delay": `${index * 70}ms`,
-                    "--watch-exit-delay": `${
-                      (primaryNavItems.length - index - 1) * 60
-                    }ms`,
-                  } as React.CSSProperties
-                }
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInfoOpen(false);
-                    item.action();
-                  }}
-                  disabled={leaving}
-                  tabIndex={navHidden ? -1 : undefined}
-                  aria-expanded={
-                    item.id === "3d-library"
-                      ? modelListOpen
-                      : item.id === "manage"
-                        ? managerOpen
-                        : undefined
-                  }
-                  aria-controls={
-                    item.id === "3d-library"
-                      ? "watch-model-library"
-                      : item.id === "manage"
-                        ? "watch-model-manager"
-                        : undefined
-                  }
-                  data-analytics-event={item.event}
-                  data-analytics-type={item.type}
-                  data-analytics-id={item.id}
-                  className={`watch-primary-nav-column disabled:pointer-events-none ${
-                    item.active ? "is-active" : ""
-                  }`}
-                >
-                  <span>
-                    {item.id === "login" ? (
-                      <ScrambleText text="LOGIN" />
-                    ) : (
-                      item.label
-                    )}
-                  </span>
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <button
-        type="button"
-        data-watch-info-toggle
-        onClick={handleInfoToggle}
-        disabled={leaving}
-        tabIndex={navHidden ? -1 : undefined}
-        aria-expanded={infoOpen}
-        aria-controls="watch-model-info"
-        className={`watch-info-toggle ${
-          infoOpen ? "is-active is-panel-open" : ""
-        } ${navHidden ? "is-nav-hidden" : ""}`}
-      >
-        INFO
-      </button>
-
-      <button
-        type="button"
-        aria-label="Reveal navigation"
-        aria-hidden={!navHidden}
-        tabIndex={navHidden ? 0 : -1}
-        onClick={(event) => {
-          if (event.detail === 0) revealNavigation();
-        }}
-        onPointerDown={handleNavRevealPointerDown}
-        className={`watch-nav-reveal-tab ${
-          navHidden ? "is-visible" : ""
-        } ${navRevealDragging ? "is-dragging" : ""}`}
-        style={
-          {
-            "--watch-tab-drag": `${navRevealDrag}px`,
-          } as React.CSSProperties
-        }
-      >
-        <span aria-hidden="true">→</span>
-      </button>
+      <SectionNavigation section={category ?? "models"} onIndex={onBack} onInfo={handleInfoToggle}><button type="button" aria-expanded={modelListOpen} aria-controls="watch-model-library" onClick={() => { setInfoOpen(false); setModelListOpen((open) => !open); }}>Index</button></SectionNavigation>
+      <SiteEditControl section={category ?? "models"} />
 
       <div
         className={`watch-studio fixed inset-0 z-[200] overflow-hidden text-black ${
@@ -1809,7 +1916,7 @@ export default function WatchStudio({
         style={{ backgroundColor: RENDER_BACKGROUNDS[sceneMode] }}
       >
       <ModelLoadingOverlay
-        key={`${selectedModel.public_url}-${selectedEnvironmentUrl}`}
+        key={modelReadinessKey}
         catalogReady={catalogReady}
         geometryReady={modelGeometryReady}
         complete={modelAssetsComplete}
@@ -1827,20 +1934,12 @@ export default function WatchStudio({
 
       <aside
         id="watch-model-library"
+        ref={(node) => { if (node) node.inert = !modelListOpen || managerOpen; }}
         aria-hidden={!modelListOpen || managerOpen}
         className={`watch-model-drawer fixed z-[65] flex flex-col overflow-hidden ${
           modelListOpen && !managerOpen ? "is-open" : ""
         }`}
       >
-        <button
-          type="button"
-          onClick={() => setModelListOpen(false)}
-          className="absolute right-5 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 active:scale-95 sm:right-8"
-          aria-label="Close model list"
-        >
-          ×
-        </button>
-
         <div className="min-h-0 flex-1 overflow-y-auto">
           {models.map((model, index) => {
             const selected = model.id === selectedModel.id;
@@ -1885,10 +1984,10 @@ export default function WatchStudio({
         <button
           type="button"
           onClick={() => setInfoOpen(false)}
-          className="absolute right-14 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 active:scale-95 sm:right-16"
+          className="absolute right-14 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 sm:right-16"
           aria-label="Close model information"
         >
-          ×
+          chiudi
         </button>
 
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 py-20 text-center sm:px-12">
@@ -1896,21 +1995,19 @@ export default function WatchStudio({
             className="watch-info-piece w-full"
             style={{ "--info-delay": "80ms" } as React.CSSProperties}
           >
-            <p className="text-[clamp(19px,3vw,31px)] leading-tight text-black">
-              {selectedModel.name}
-            </p>
+            {canEditModelInfo ? <input className="inline-site-input w-full text-center text-[20px]" aria-label="Nome del modello" value={selectedInfoDraft?.name ?? selectedModel.name} disabled={inlineSaving} onChange={(event) => stageModelInfo({ name: event.target.value })} /> : <p className="text-[clamp(19px,3vw,31px)] leading-tight text-black">{selectedModel.name}</p>}
           </div>
 
-          {selectedModel.description && (
+          {(selectedModel.description || editing) && (
             <div
               className="watch-info-piece mt-4 w-full"
               style={{ "--info-delay": "145ms" } as React.CSSProperties}
             >
-              <p className="mx-auto max-w-[38ch] text-[clamp(11px,1.4vw,15px)] leading-relaxed text-black/52">
-                {selectedModel.description}
-              </p>
+              {canEditModelInfo ? <textarea className="inline-site-textarea" aria-label="Descrizione del modello" value={selectedInfoDraft?.description ?? selectedModel.description} rows={5} disabled={inlineSaving} onChange={(event) => stageModelInfo({ description: event.target.value })} /> : <p className="mx-auto max-w-[38ch] text-[clamp(11px,1.4vw,15px)] leading-relaxed text-black/52">{selectedModel.description}</p>}
             </div>
           )}
+
+          {editing && selectedModel.id === DEFAULT_MODEL.id && <p className="mt-5 text-[12px] leading-relaxed text-black/50">Il modello incluso nel sito è in sola lettura. I testi dei modelli caricati nella libreria si modificano qui.</p>}
 
           <nav
             className="watch-info-piece mt-9 flex flex-wrap items-center justify-center gap-x-7 gap-y-2"
@@ -1944,6 +2041,7 @@ export default function WatchStudio({
       </aside>
 
       <div
+        data-blossom
         className={`watch-model-stage watch-studio-canvas absolute inset-0 ${modelMotionClass}`}
         onPointerDown={handleModelPointerDown}
         onPointerMove={handleModelPointerMove}
@@ -1953,6 +2051,11 @@ export default function WatchStudio({
         }}
       >
         <Canvas
+          frameloop={documentRendering.active ? "always" : "never"}
+          onCreated={documentRendering.onCreated}
+          // The stage intentionally starts at scale(0). Measure layout size,
+          // not its transformed rectangle, so WebGL can warm up while hidden.
+          resize={{ offsetSize: true }}
           shadows={sceneMode !== "pen"}
           dpr={[1, 1.5]}
           gl={{ antialias: true, powerPreference: "high-performance" }}
@@ -1979,7 +2082,7 @@ export default function WatchStudio({
             key={selectedModel.public_url}
             ref={controlsRef}
             makeDefault
-            enabled={!managerOpen && modelMotion === "visible"}
+            enabled={!managerOpen && !cameraReturning && modelMotion === "visible"}
             enableDamping
             dampingFactor={0.075}
             enablePan
@@ -2005,6 +2108,8 @@ export default function WatchStudio({
           <ResetModelCamera
             modelKey={selectedModel.public_url}
             controlsRef={controlsRef}
+            returnRef={cameraReturnRef}
+            onReturning={setCameraReturning}
           />
 
           <SceneReadySignal
@@ -2015,7 +2120,7 @@ export default function WatchStudio({
 
           <ModelErrorBoundary
             resetKey={selectedModel.public_url}
-            onError={() => setModelLoadError(true)}
+            onError={() => setLoadErrorKey(modelReadinessKey)}
           >
             <Suspense fallback={null}>
               {catalogReady && (

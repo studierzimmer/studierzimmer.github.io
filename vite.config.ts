@@ -25,6 +25,9 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks(moduleId) {
+          // Vite's tiny lazy-import runtime must not be captured by a 3D
+          // chunk, otherwise every lazy route would eagerly import Three.
+          if (moduleId.includes("vite/preload-helper") || moduleId.includes("commonjsHelpers.js")) return "react-core";
           if (!moduleId.includes("node_modules")) return;
           if (moduleId.includes("node_modules/three/")) return "three";
           if (
@@ -38,12 +41,17 @@ export default defineConfig(({ mode }) => ({
           }
           if (
             moduleId.includes("node_modules/framer-motion/") ||
-            moduleId.includes("node_modules/@react-spring/")
+            moduleId.includes("node_modules/motion-dom/") ||
+            moduleId.includes("node_modules/motion-utils/")
           ) {
             return "motion";
           }
           if (moduleId.includes("node_modules/@supabase/")) return "supabase";
-          return "vendor";
+          // A catch-all vendor chunk can pull lazy 3D dependencies back into
+          // the home page through shared imports. Keep only the actual UI
+          // runtime together; let Rollup split everything else by usage.
+          if (/node_modules\/(react|react-dom|scheduler|react-router|react-router-dom)\//.test(moduleId)) return "react-core";
+          return undefined;
         },
       },
     },

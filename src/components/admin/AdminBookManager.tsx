@@ -1,6 +1,8 @@
 import React, {
   ChangeEvent,
   FormEvent,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -35,6 +37,11 @@ import {
   DEFAULT_ARCHIVE_SECTIONS,
   type ArchiveSection,
 } from "@/types/archiveSections";
+import "./AdminWorkspace.css";
+
+const AdminSiteSettings = lazy(() => import("./AdminSiteSettings"));
+const AdminArtworkManager = lazy(() => import("./AdminArtworkManager"));
+const AdminBookCommentsManager = lazy(() => import("./AdminBookCommentsManager"));
 
 interface AdminBookManagerProps {
   userEmail: string;
@@ -132,6 +139,34 @@ const accountMotionStyles = `
   grid-auto-columns: clamp(34px, 5vw, 48px);
   align-items: start;
   gap: clamp(1px, 0.6vw, 7px);
+  max-width: calc(100vw - 24px - env(safe-area-inset-left));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.admin-page-strip {
+  display: flex;
+  gap: 16px;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding: 8px 2px 16px;
+}
+
+.admin-page-card {
+  flex: 0 0 160px;
+  width: 160px;
+  min-width: 0;
+  padding: 8px;
+  scroll-snap-align: start;
+  background: rgb(0 0 0 / 0.025);
+}
+
+.admin-page-preview {
+  height: clamp(130px, 24dvh, 190px);
+  overflow: hidden;
+  background: rgb(0 0 0 / 0.03);
 }
 
 .admin-section-column {
@@ -289,7 +324,7 @@ const inputClass =
   "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[15px] outline-none focus:border-black";
 
 const buttonClass =
-  "border-0 bg-transparent px-2 py-2 text-[14px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-40";
 
 function messageFrom(error: unknown): string {
   return error instanceof Error
@@ -305,6 +340,7 @@ function rgbChannel(value: number | undefined): number {
 
 export default function AdminBookManager({
   userEmail,
+  onBack,
   onNavigate,
   onLibrary,
   onModels,
@@ -317,14 +353,21 @@ export default function AdminBookManager({
   );
   const [books, setBooks] = useState<Book[]>([]);
   const [managerSection, setManagerSection] = useState<
-    "books" | "models" | "characters" | "sections" | "info"
-  >("books");
+    "books" | "models" | "characters" | "sections" | "info" | "sito" | "artworks"
+  >(() => {
+    const section = new URLSearchParams(window.location.search).get("section");
+    return section === "sito" || section === "artworks" ? section : "books";
+  });
   const [archiveSections, setArchiveSections] = useState<ArchiveSection[]>(
     DEFAULT_ARCHIVE_SECTIONS
   );
 
   const [selectedBookId, setSelectedBookId] =
     useState<string | null>(null);
+  const [bookEditorPanel, setBookEditorPanel] = useState<"pages" | "settings" | "comments">("pages");
+  const [commentsOpened, setCommentsOpened] = useState(false);
+
+  useEffect(() => { setBookEditorPanel("pages"); }, [selectedBookId]);
 
   const [pages, setPages] = useState<BookPage[]>([]);
 
@@ -845,13 +888,10 @@ export default function AdminBookManager({
       <style>{accountMotionStyles}</style>
 
       <header
-        className={
-          embedded
-            ? "sticky top-0 z-10 flex min-h-[72px] items-start justify-end bg-white px-4 pt-4 sm:min-h-[88px] sm:px-6 sm:pt-6"
-            : "sticky top-0 z-10 flex flex-wrap items-center justify-end gap-4 bg-white px-5 py-4 md:px-8"
-        }
+        className="admin-topbar sticky top-0 z-40 flex items-center justify-between bg-white"
       >
-        <div className="flex h-12 items-center gap-4 text-[13px]">
+        <div className="admin-workspace-brand"><span>studier zimmer</span><span aria-hidden="true">•</span><button type="button" onClick={onBack}>index</button></div>
+        <div className="admin-account-controls flex items-center gap-4 text-[12px]">
           <span
             aria-label={userEmail}
             className={`${
@@ -869,7 +909,7 @@ export default function AdminBookManager({
             aria-label="Logout"
             className={`${
               embedded ? `admin-account-item item-logout is-${accountMotion}` : ""
-            } underline underline-offset-4`}
+            }`}
           >
             {embedded ? renderAccountLetters("LOGOUT", 120) : "LOGOUT"}
           </button>
@@ -877,49 +917,11 @@ export default function AdminBookManager({
       </header>
 
       <nav
-        className={`admin-section-nav fixed z-30 ${
+        className={`admin-section-nav z-30 ${
           embedded ? "is-embedded" : ""
         }`}
         aria-label="Admin sections"
       >
-        {embedded ? (
-          <>
-            <span className="admin-section-placeholder" aria-hidden="true" />
-            <span className="admin-section-placeholder" aria-hidden="true" />
-            <span className="admin-section-placeholder" aria-hidden="true" />
-            <span className="admin-section-placeholder" aria-hidden="true" />
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={onNavigate}
-              className="admin-section-column"
-            >
-              <span>NAVIGATE</span>
-            </button>
-            <button
-              type="button"
-              onClick={onLibrary}
-              className="admin-section-column"
-            >
-              <span>LIBRARY</span>
-            </button>
-            <button
-              type="button"
-              className="admin-section-column"
-            >
-              <span>LOGIN</span>
-            </button>
-            <button
-              type="button"
-              onClick={onModels}
-              className="admin-section-column"
-            >
-              <span>MODELS</span>
-            </button>
-          </>
-        )}
         <button
           type="button"
           onClick={() => setManagerSection("books")}
@@ -928,7 +930,7 @@ export default function AdminBookManager({
             managerSection === "books" ? "is-active" : ""
           }`}
         >
-          <span>BOOKS</span>
+          <span>Libri</span>
         </button>
         <button
           type="button"
@@ -938,7 +940,7 @@ export default function AdminBookManager({
             managerSection === "models" ? "is-active" : ""
           }`}
         >
-          <span>3D DATA</span>
+          <span>Modelli 3D</span>
         </button>
         <button
           type="button"
@@ -948,7 +950,7 @@ export default function AdminBookManager({
             managerSection === "characters" ? "is-active" : ""
           }`}
         >
-          <span>CHARACTERS</span>
+          <span>Personaggi</span>
         </button>
         <button
           type="button"
@@ -958,7 +960,23 @@ export default function AdminBookManager({
             managerSection === "sections" ? "is-active" : ""
           }`}
         >
-          <span>ARCHIVE</span>
+          <span>Categorie libri</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setManagerSection("sito")}
+          aria-current={managerSection === "sito" ? "page" : undefined}
+          className={`admin-section-column ${managerSection === "sito" ? "is-active" : ""}`}
+        >
+          <span>Sito</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setManagerSection("artworks")}
+          aria-current={managerSection === "artworks" ? "page" : undefined}
+          className={`admin-section-column ${managerSection === "artworks" ? "is-active" : ""}`}
+        >
+          <span>Opere & Featured In</span>
         </button>
         <button
           type="button"
@@ -968,7 +986,7 @@ export default function AdminBookManager({
             managerSection === "info" ? "is-active" : ""
           }`}
         >
-          <span>INFO</span>
+          <span>Statistiche</span>
         </button>
       </nav>
 
@@ -976,7 +994,13 @@ export default function AdminBookManager({
         key={managerSection}
         className="admin-manager-content admin-section-surface"
       >
-      {managerSection === "models" ? (
+      {managerSection === "sito" || managerSection === "artworks" ? (
+        <main className="mx-auto w-full max-w-[1300px] px-5 pb-12 sm:px-8">
+          <Suspense fallback={<p role="status">Caricamento…</p>}>
+            {managerSection === "sito" ? <AdminSiteSettings /> : <AdminArtworkManager />}
+          </Suspense>
+        </main>
+      ) : managerSection === "models" ? (
         <main className="mx-auto flex min-h-[calc(100vh-121px)] w-full max-w-[1500px]">
           <AdminThreeDModelManager />
         </main>
@@ -991,6 +1015,8 @@ export default function AdminBookManager({
       ) : (
       <main className="mx-auto grid w-full max-w-[1500px] gap-0 md:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-black/20 p-5 md:min-h-[calc(100vh-65px)] md:border-b-0 md:border-r md:p-6">
+          <details className="admin-create-disclosure">
+          <summary>Nuovo libro <span aria-hidden="true">＋</span></summary>
           <form
             onSubmit={
               handleCreateBook
@@ -1005,7 +1031,7 @@ export default function AdminBookManager({
             }
           >
             <h2 className="text-[18px]">
-              {embedded ? <AnimatedBackendText text="CREATE A BOOK" /> : "CREATE A BOOK"}
+              Titolo e raccolta
             </h2>
 
             <label className="text-[12px]">
@@ -1072,9 +1098,10 @@ export default function AdminBookManager({
               disabled={busy}
               className={buttonClass}
             >
-              CREATE EMPTY FOLDER
+              Crea libro
             </button>
           </form>
+          </details>
 
           <div
             className={embedded ? `admin-backend-panel is-${accountMotion}` : ""}
@@ -1086,7 +1113,7 @@ export default function AdminBookManager({
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[18px]">
-                {embedded ? <AnimatedBackendText text="BOOK FOLDERS" /> : "BOOK FOLDERS"}
+                Libri
               </h2>
 
               <span className="text-[12px] text-black/50">
@@ -1102,12 +1129,13 @@ export default function AdminBookManager({
                 the first folder above.
               </p>
             ) : (
-              <div className="flex flex-col border-t border-black/15">
+              <div className="admin-book-catalog flex flex-col border-t border-black/15">
                 {books.map(
                   (book) => (
                     <button
                       key={book.id}
                       type="button"
+                      aria-pressed={book.id === selectedBookId}
                       onClick={() =>
                         setSelectedBookId(
                           book.id
@@ -1117,7 +1145,7 @@ export default function AdminBookManager({
                         book.id ===
                         selectedBookId
                           ? "bg-black text-white"
-                          : "hover:bg-black/5"
+                          : "bg-transparent"
                       }`}
                     >
                       <span className="block truncate text-[14px]">
@@ -1180,266 +1208,89 @@ export default function AdminBookManager({
               CREATE OR SELECT A BOOK
             </div>
           ) : (
-            <div className="flex flex-col gap-10">
-              <form
-                onSubmit={
-                  handleSaveBook
-                }
-                className="grid gap-5 lg:grid-cols-2"
-              >
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <h1 className="text-[24px] leading-tight">
-                      {embedded ? (
-                        <AnimatedBackendText text={selectedBook.title} />
-                      ) : (
-                        selectedBook.title
-                      )}
-                    </h1>
-
-                    <p className="mt-2 font-mono text-[12px] text-black/55">
-                      Storage →
-                      book-pages/
-                      {
-                        selectedBook.storage_folder
-                      }
-                      /
-                    </p>
-
-                    <p className="mt-1 font-mono text-[12px] text-black/55">
-                      Public link →
-                      /book/
-                      {
-                        selectedBook.slug
-                      }
-                    </p>
+            <div className="admin-book-editor flex flex-col gap-4">
+              <header className="admin-editor-context">
+                <div><p className="admin-editor-eyebrow">Libro selezionato</p><h1>{selectedBook.title}</h1></div>
+                <span className="admin-editor-state">{selectedBook.is_published ? "Pubblico" : "Bozza"} · {pages.length} pagine</span>
+              </header>
+              <details className="admin-editor-reference">
+                <summary>Link e cartella</summary>
+                <p>/book/{selectedBook.slug}</p>
+                <p>book-pages/{selectedBook.storage_folder}/</p>
+              </details>
+              <div className="admin-editor-tabs has-comments" role="tablist" aria-label="Gestione del libro">
+                <button type="button" role="tab" aria-selected={bookEditorPanel === "pages"} aria-controls="admin-book-pages" id="admin-book-pages-tab" onClick={() => setBookEditorPanel("pages")}>Pagine <span>{pages.length}</span></button>
+                <button type="button" role="tab" aria-selected={bookEditorPanel === "settings"} aria-controls="admin-book-settings" id="admin-book-settings-tab" onClick={() => setBookEditorPanel("settings")}>Impostazioni</button>
+                <button type="button" role="tab" aria-selected={bookEditorPanel === "comments"} aria-controls="admin-book-comments" id="admin-book-comments-tab" onClick={() => { setCommentsOpened(true); setBookEditorPanel("comments"); }}>Commenti</button>
+              </div>
+              <div id="admin-book-comments" role="tabpanel" aria-labelledby="admin-book-comments-tab" hidden={bookEditorPanel !== "comments"}>
+                {commentsOpened && <Suspense fallback={<p role="status">Caricamento dei commenti…</p>}><AdminBookCommentsManager books={books} selectedBookId={selectedBookId} selectedPages={pages} /></Suspense>}
+              </div>
+              <form hidden={bookEditorPanel !== "settings"} onSubmit={handleSaveBook} id="admin-book-settings" role="tabpanel" aria-labelledby="admin-book-settings-tab" className="admin-editor-form">
+                <details className="admin-editor-group" open>
+                  <summary><span>Testi e categoria<small>Titolo, descrizione e raccolta</small></span><span aria-hidden="true">＋</span></summary>
+                  <div className="admin-editor-fields">
+                    <label>Titolo<input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required className={inputClass} /></label>
+                    <label>Categoria<select value={editCategory} onChange={(event) => setEditCategory(event.target.value as BookCategory)} className={inputClass}>
+                      {!archiveSections.some((section) => section.slug === editCategory) && <option value={editCategory}>{editCategory.toUpperCase()}</option>}
+                      {archiveSections.map((section) => <option key={section.id} value={section.slug}>{section.name}</option>)}
+                    </select></label>
+                    <label>Descrizione<textarea value={editDescription} onChange={(event) => setEditDescription(event.target.value)} rows={4} className={`${inputClass} resize-y`} /></label>
                   </div>
-
-                  <label className="text-[12px]">
-                    TITLE
-
-                    <input
-                      value={
-                        editTitle
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditTitle(
-                          event.target
-                            .value
-                        )
-                      }
-                      required
-                      className={`${inputClass} mt-1`}
-                    />
-                  </label>
-
-                  <label className="text-[12px]">
-                    CATEGORY
-
-                    <select
-                      value={
-                        editCategory
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditCategory(
-                          event.target
-                            .value as BookCategory
-                        )
-                      }
-                      className={`${inputClass} mt-1`}
-                    >
-                      {!archiveSections.some(
-                        (section) => section.slug === editCategory
-                      ) && (
-                        <option value={editCategory}>
-                          {editCategory.toUpperCase()}
-                        </option>
-                      )}
-                      {archiveSections.map((section) => (
-                        <option key={section.id} value={section.slug}>
-                          {section.name.toUpperCase()}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="text-[12px]">
-                    PUBLIC ORDER
-
-                    <input
-                      type="number"
-                      value={
-                        editSortOrder
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditSortOrder(
-                          Number(
-                            event.target
-                              .value
-                          )
-                        )
-                      }
-                      className={`${inputClass} mt-1`}
-                    />
-                  </label>
-
-                  <label className="text-[12px]">
-                    PAGE SIZE / BINDING — BACKEND ONLY
-
-                    <select
-                      value={editPageFormat}
-                      onChange={(event) =>
-                        setEditPageFormat(event.target.value as BookPageFormat)
-                      }
-                      className={`${inputClass} mt-1`}
-                    >
-                      <option value="a4_long_edge">
-                        A4 — UNFOLDS FROM LONG SIDE
-                      </option>
-                      <option value="a4_short_edge">
-                        A4 — UNFOLDS FROM SHORT SIDE
-                      </option>
-                      <option value="square">
-                        SQUARE
-                      </option>
-                    </select>
-                  </label>
-                </div>
-
-                <div className="flex flex-col gap-4">
-                  <label className="text-[12px]">
-                    DESCRIPTION
-
-                    <textarea
-                      value={
-                        editDescription
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditDescription(
-                          event.target
-                            .value
-                        )
-                      }
-                      rows={7}
-                      className={`${inputClass} mt-1 resize-y`}
-                    />
-                  </label>
-
-                  <BookBackgroundColorPicker
-                    key={selectedBook.id}
-                    value={{
-                      r: editBackgroundR,
-                      g: editBackgroundG,
-                      b: editBackgroundB,
-                    }}
-                    onChange={(color) => {
-                      setEditBackgroundR(color.r);
-                      setEditBackgroundG(color.g);
-                      setEditBackgroundB(color.b);
-                    }}
-                  />
-
-                  <label className="flex items-center gap-3 text-[14px]">
-                    <input
-                      type="checkbox"
-                      checked={
-                        editPublished
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditPublished(
-                          event.target
-                            .checked
-                        )
-                      }
-                    />
-
-                    PUBLISHED — visible to
-                    the public
-                  </label>
-
-                  <label className="flex items-center gap-3 text-[14px]">
-                    <input
-                      type="checkbox"
-                      checked={
-                        editFeatured
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setEditFeatured(
-                          event.target
-                            .checked
-                        )
-                      }
-                    />
-
-                    FEATURED — opens by
-                    default
-                  </label>
-
-                  <div className="mt-auto flex flex-wrap gap-3">
-                    <button
-                      type="submit"
-                      disabled={busy}
-                      className={
-                        buttonClass
-                      }
-                    >
-                      SAVE BOOK
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        void handleDeleteBook()
-                      }
-                      className={`${buttonClass} border-red-700 text-red-700`}
-                    >
-                      DELETE BOOK + FOLDER
-                    </button>
+                </details>
+                <details className="admin-editor-group">
+                  <summary><span>Pubblicazione<small>Visibilità, libro iniziale e ordine</small></span><span aria-hidden="true">＋</span></summary>
+                  <div className="admin-editor-fields">
+                    <label className="admin-editor-toggle"><input type="checkbox" checked={editPublished} onChange={(event) => setEditPublished(event.target.checked)} /><span>Pubblico<small>Visibile ai visitatori del sito</small></span></label>
+                    <label className="admin-editor-toggle"><input type="checkbox" checked={editFeatured} onChange={(event) => setEditFeatured(event.target.checked)} /><span>Libro iniziale<small>Si apre per primo negli Sketches</small></span></label>
+                    <label>Ordine nella lista<input type="number" value={editSortOrder} onChange={(event) => setEditSortOrder(Number(event.target.value))} className={inputClass} /></label>
                   </div>
+                </details>
+                <details className="admin-editor-group">
+                  <summary><span>Formato e sfondo<small>Rilegatura e colore del libro</small></span><span aria-hidden="true">＋</span></summary>
+                  <div className="admin-editor-fields">
+                    <label>Formato e rilegatura<select value={editPageFormat} onChange={(event) => setEditPageFormat(event.target.value as BookPageFormat)} className={inputClass}>
+                      <option value="a4_long_edge">A4 · apertura dal lato lungo</option>
+                      <option value="a4_short_edge">A4 · apertura dal lato corto</option>
+                      <option value="square">Quadrato</option>
+                    </select></label>
+                    <BookBackgroundColorPicker key={selectedBook.id} value={{ r: editBackgroundR, g: editBackgroundG, b: editBackgroundB }} onChange={(color) => { setEditBackgroundR(color.r); setEditBackgroundG(color.g); setEditBackgroundB(color.b); }} />
+                  </div>
+                </details>
+                <details className="admin-editor-group admin-editor-danger">
+                  <summary><span>Elimina libro<small>Operazione definitiva, richiede conferma</small></span><span aria-hidden="true">＋</span></summary>
+                  <div className="admin-editor-fields"><p>Rimuove il libro e tutti i JPG della sua cartella.</p><button type="button" disabled={busy} onClick={() => void handleDeleteBook()} className={`${buttonClass} text-red-700`}>Elimina libro e cartella</button></div>
+                </details>
+                <div className="admin-editor-savebar">
+                  <span>{busy ? "Operazione in corso…" : "Le modifiche si applicano al salvataggio."}</span>
+                  <button type="submit" disabled={busy} className="admin-primary-action">{busy ? "Attendi…" : "Salva libro"}</button>
                 </div>
               </form>
 
-              <div className="border-t border-black/20 pt-8">
+              <div id="admin-book-pages" role="tabpanel" aria-labelledby="admin-book-pages-tab" hidden={bookEditorPanel !== "pages"} className="admin-book-pages">
                 <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h2 className="text-[20px]">
-                      {embedded ? <AnimatedBackendText text="JPG PAGES" /> : "JPG PAGES"}
+                      Pagine del libro
                     </h2>
 
                     <p className="mt-1 text-[13px] text-black/55">
-                      Select several files at
-                      once. Files are appended
-                      using natural filename
-                      order, so 01.jpg comes
-                      before 02.jpg.
+                      Scorri per riordinare o rimuovere le pagine.
                     </p>
                   </div>
 
                   <span className="font-mono text-[12px] text-black/50">
-                    {pages.length} PAGE
-                    {pages.length === 1
-                      ? ""
-                      : "S"}
+                    {pages.length} {pages.length === 1 ? "pagina" : "pagine"}
                   </span>
                 </div>
 
-                <div className="mb-7 flex flex-col gap-3 border border-dashed border-black/30 p-4 sm:flex-row sm:items-center">
+                <details className="admin-editor-group admin-page-upload">
+                <summary><span>Aggiungi pagine<small>JPG multipli, ordinati per nome del file</small></span><span aria-hidden="true">＋</span></summary>
+                <div className="admin-editor-fields">
                   <input
                     ref={fileInputRef}
                     type="file"
+                    aria-label="Aggiungi pagine JPG al libro"
                     accept=".jpg,.jpeg,image/jpeg"
                     multiple
                     onChange={
@@ -1463,8 +1314,8 @@ export default function AdminBookManager({
                     }
                   >
                     {uploadProgress
-                      ? `UPLOADING ${uploadProgress}`
-                      : `UPLOAD ${
+                      ? `Caricamento ${uploadProgress}`
+                      : `Carica ${
                           selectedFiles.length ||
                           ""
                         } JPG${
@@ -1475,6 +1326,7 @@ export default function AdminBookManager({
                         }`}
                   </button>
                 </div>
+                </details>
 
                 {loadingPages ? (
                   <p>...</p>
@@ -1483,7 +1335,12 @@ export default function AdminBookManager({
                     THIS FOLDER IS EMPTY
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                  <div
+                    className="admin-page-strip"
+                    role="region"
+                    aria-label="Pagine del libro: scorri orizzontalmente per gestirle"
+                    tabIndex={0}
+                  >
                     {pages.map(
                       (
                         page,
@@ -1493,9 +1350,9 @@ export default function AdminBookManager({
                           key={
                             page.id
                           }
-                          className="min-w-0 border border-black/20 p-2"
+                          className="admin-page-card"
                         >
-                          <div className="aspect-[3/4] overflow-hidden bg-black/5">
+                          <div className="admin-page-preview">
                             <img
                               src={
                                 page.public_url
@@ -1525,7 +1382,7 @@ export default function AdminBookManager({
                             <div className="mt-2 grid grid-cols-3 gap-1">
                               <button
                                 type="button"
-                                title="Move earlier"
+                                aria-label={`Sposta pagina ${page.page_number} prima`}
                                 disabled={
                                   busy ||
                                   index ===
@@ -1541,12 +1398,12 @@ export default function AdminBookManager({
                                   buttonClass
                                 }
                               >
-                                ↑
+                                ←
                               </button>
 
                               <button
                                 type="button"
-                                title="Move later"
+                                aria-label={`Sposta pagina ${page.page_number} dopo`}
                                 disabled={
                                   busy ||
                                   index ===
@@ -1563,12 +1420,12 @@ export default function AdminBookManager({
                                   buttonClass
                                 }
                               >
-                                ↓
+                                →
                               </button>
 
                               <button
                                 type="button"
-                                title="Delete page"
+                                aria-label={`Elimina pagina ${page.page_number}`}
                                 disabled={
                                   busy
                                 }

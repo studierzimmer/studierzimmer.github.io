@@ -23,6 +23,10 @@ import BookBackgroundColorPicker, {
 } from "@/components/admin/BookBackgroundColorPicker";
 import type { ThreeDModel } from "@/types/threeDModels";
 import type { ModelProcessingProgress } from "@/services/stepModelConverter";
+import { useSiteContent } from "@/hooks/useSiteContent";
+import { modelCategoryFor } from "@/lib/modelCategories";
+import type { ModelCategory } from "@/types/siteContent";
+import "./AdminWorkspace.css";
 
 interface AdminThreeDModelManagerProps {
   onModelsChanged?: () => void;
@@ -31,7 +35,7 @@ interface AdminThreeDModelManagerProps {
 const inputClass =
   "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[13px] outline-none focus:border-black";
 const buttonClass =
-  "border-0 bg-transparent px-2 py-2 text-[12px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[12px] disabled:cursor-not-allowed disabled:opacity-40";
 const modelFileAccept =
   ".glb,.stl,.step,.stp,model/gltf-binary,model/stl,application/sla,application/step,model/step";
 const hdriFileAccept = ".hdr,.exr,image/vnd.radiance,image/x-exr";
@@ -53,6 +57,8 @@ function messageFrom(error: unknown): string {
 export default function AdminThreeDModelManager({
   onModelsChanged,
 }: AdminThreeDModelManagerProps) {
+  const { settings, saveSettings } = useSiteContent();
+  const [categoryBusy, setCategoryBusy] = useState(false);
   const [models, setModels] = useState<ThreeDModel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -258,25 +264,29 @@ export default function AdminThreeDModelManager({
   };
 
   return (
-    <div className="grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
+    <div className="admin-model-workspace grid min-h-0 flex-1 md:grid-cols-[240px_minmax(0,1fr)]">
       <aside className="overflow-y-auto p-4">
+        <details className="admin-create-disclosure">
+        <summary>Nuovo modello <span aria-hidden="true">＋</span></summary>
         <form onSubmit={handleCreate} className="mb-7 flex flex-col gap-3">
-          <h2 className="text-[16px]">ADD 3D MODEL</h2>
+          <h2 className="text-[16px]">Nome e file</h2>
           <input
             value={newName}
             onChange={(event) => setNewName(event.target.value)}
-            placeholder="MODEL NAME"
+            aria-label="Nome del nuovo modello"
+            placeholder="Nome del modello"
             className={inputClass}
           />
           <input
             ref={createFileRef}
             type="file"
+            aria-label="File del nuovo modello"
             accept={modelFileAccept}
             onChange={(event) => setNewFile(event.target.files?.[0] ?? null)}
             className="min-w-0 text-[12px]"
           />
           <button type="submit" disabled={busy || !newFile} className={buttonClass}>
-            UPLOAD GLB / STL / STEP
+            Carica modello
           </button>
           {processing && (
             <div className="bg-black/[0.035] p-3" role="status">
@@ -300,9 +310,10 @@ export default function AdminThreeDModelManager({
             </div>
           )}
         </form>
+        </details>
 
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-[16px]">MODEL LIST</h2>
+          <h2 className="text-[16px]">Modelli</h2>
           <span className="text-[11px] text-black/45">{models.length}</span>
         </div>
 
@@ -313,14 +324,15 @@ export default function AdminThreeDModelManager({
             No Supabase models yet. The local watch remains the public fallback.
           </p>
         ) : (
-          <div>
+          <div className="admin-model-catalog">
             {models.map((model) => (
               <button
                 key={model.id}
                 type="button"
+                aria-pressed={model.id === selectedId}
                 onClick={() => setSelectedId(model.id)}
                 className={`block w-full border-0 px-2 py-3 text-left transition-colors ${
-                  model.id === selectedId ? "bg-black text-white" : "hover:bg-black/5"
+                  model.id === selectedId ? "bg-black text-white" : "bg-transparent"
                 }`}
               >
                 <span className="block truncate text-[13px]">{model.name}</span>
@@ -352,165 +364,82 @@ export default function AdminThreeDModelManager({
             UPLOAD OR SELECT A MODEL
           </div>
         ) : (
-          <form onSubmit={handleSave} className="flex flex-col gap-4">
-            <div>
-              <h2 className="text-[20px]">{selectedModel.name}</h2>
-              <p className="mt-1 break-all font-mono text-[10px] text-black/45">
-                {selectedModel.storage_path}
-              </p>
-              {selectedModel.source_format === "step" && (
-                <div className="mt-3 bg-black/[0.035] p-3 text-[11px] leading-relaxed">
-                  <p>STEP SOURCE · {selectedModel.source_file_name}</p>
-                  <p className="mt-1 text-black/50">
-                    The private STEP is stored separately. Public visitors receive
-                    only the generated GLB preview.
-                  </p>
-                </div>
-              )}
-            </div>
+          <form onSubmit={handleSave} className="admin-editor-form">
+            <header className="admin-editor-context">
+              <div><p className="admin-editor-eyebrow">Modello selezionato</p><h2>{selectedModel.name}</h2></div>
+              <span className="admin-editor-state">{modelFormat(selectedModel)} · {selectedModel.is_published ? "Pubblico" : "Bozza"}</span>
+            </header>
+            <details className="admin-editor-reference">
+              <summary>File e dati tecnici</summary>
+              <p>{selectedModel.storage_path}</p>
+              {selectedModel.source_format === "step" && <><p>Sorgente STEP · {selectedModel.source_file_name}</p><p>Il sorgente resta privato. I visitatori ricevono solo l’anteprima GLB generata.</p></>}
+            </details>
 
-            <label className="text-[11px]">
-              NAME
-              <input
-                required
-                value={editName}
-                onChange={(event) => setEditName(event.target.value)}
-                className={`${inputClass} mt-1`}
-              />
-            </label>
-
-            <label className="text-[11px]">
-              DESCRIPTION
-              <textarea
-                rows={4}
-                value={editDescription}
-                onChange={(event) => setEditDescription(event.target.value)}
-                className={`${inputClass} mt-1 resize-y`}
-              />
-            </label>
-
-            <label className="text-[11px]">
-              PUBLIC ORDER
-              <input
-                type="number"
-                value={editSortOrder}
-                onChange={(event) => setEditSortOrder(Number(event.target.value))}
-                className={`${inputClass} mt-1`}
-              />
-            </label>
-
-            {isStlModel(selectedModel) && (
-              <div>
-                <BookBackgroundColorPicker
-                  key={`${selectedModel.id}-${selectedModel.file_name}`}
-                  value={editPlasterColor}
-                  onChange={setEditPlasterColor}
-                  legend="STL PLASTER COLOR — HSV"
-                  ariaLabel="STL plaster color"
-                />
-                <p className="mt-2 text-[11px] leading-relaxed text-black/50">
-                  Used as the plaster base color in PBR mode. Arctic stays
-                  neutral and pen stays black on white.
-                </p>
+            <details className="admin-editor-group" open>
+              <summary><span>Testi<small>Nome e descrizione del modello</small></span><span aria-hidden="true">＋</span></summary>
+              <div className="admin-editor-fields">
+                <label>Nome<input required value={editName} onChange={(event) => setEditName(event.target.value)} className={inputClass} /></label>
+                <label>Descrizione<textarea rows={4} value={editDescription} onChange={(event) => setEditDescription(event.target.value)} className={`${inputClass} resize-y`} /></label>
               </div>
-            )}
+            </details>
 
-            <label className="flex items-center gap-3 text-[12px]">
-              <input
-                type="checkbox"
-                checked={editPublished}
-                onChange={(event) => setEditPublished(event.target.checked)}
-              />
-              PUBLISHED — visible in the public 3D list
-            </label>
-
-            <label className="flex items-center gap-3 text-[12px]">
-              <input
-                type="checkbox"
-                checked={editFeatured}
-                onChange={(event) => setEditFeatured(event.target.checked)}
-              />
-              FEATURED — opens first
-            </label>
-
-            {modelFormat(selectedModel) === "GLB" && (
-              <label className="flex items-start gap-3 text-[12px] leading-relaxed">
-                <input
-                  type="checkbox"
-                  checked={editWatch}
-                  onChange={(event) => setEditWatch(event.target.checked)}
-                  className="mt-0.5"
-                />
-                <span>
-                  WATCH — use local time with hourshand_pivot,
-                  minuteshand_pivot and secondshand_pivot
-                </span>
-              </label>
-            )}
-
-            <div className="bg-black/[0.035] p-3">
-              <label className="block text-[11px]">
-                REPLACE GLB / STL / STEP
-                <input
-                  ref={replaceFileRef}
-                  type="file"
-                  accept={modelFileAccept}
-                  disabled={busy}
-                  onChange={(event) => void handleReplace(event.target.files?.[0])}
-                  className="mt-2 block min-w-0 text-[12px]"
-                />
-              </label>
-            </div>
-
-            <div className="bg-black/[0.035] p-3">
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-[11px]">PBR HDRI ENVIRONMENT</p>
-                  <p className="mt-1 break-all text-[10px] text-black/50">
-                    {selectedModel.hdri_file_name ?? "BUILT-IN NEUTRAL STUDIO"}
-                  </p>
-                </div>
-                {selectedModel.hdri_storage_path && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void handleHdriRemove()}
-                    className={buttonClass}
-                  >
-                    REMOVE HDRI
-                  </button>
-                )}
+            <details className="admin-editor-group">
+              <summary><span>Pubblicazione e sezione<small>Visibilità, ordine e comportamento</small></span><span aria-hidden="true">＋</span></summary>
+              <div className="admin-editor-fields">
+                <label>Sezione del sito<select className={inputClass} value={modelCategoryFor(selectedModel, settings.model_categories)} disabled={categoryBusy || busy} onChange={async (event) => {
+                  const category = event.target.value as ModelCategory;
+                  setCategoryBusy(true);
+                  try {
+                    await saveSettings({ ...settings, model_categories: { ...settings.model_categories, [selectedModel.id]: category } });
+                    setNotice("Sezione aggiornata.");
+                    onModelsChanged?.();
+                  } catch (categoryError) { setError(messageFrom(categoryError)); }
+                  finally { setCategoryBusy(false); }
+                }}>
+                  <option value="horlogerie">Horlogerie · orologi</option>
+                  <option value="jewelry">Jewelry · gioielli</option>
+                  <option value="models">Models · altri modelli</option>
+                </select><small>La sezione si aggiorna subito; gli altri campi si applicano con Salva.</small></label>
+                <label>Ordine nella lista<input type="number" value={editSortOrder} onChange={(event) => setEditSortOrder(Number(event.target.value))} className={inputClass} /></label>
+                <label className="admin-editor-toggle"><input type="checkbox" checked={editPublished} onChange={(event) => setEditPublished(event.target.checked)} /><span>Pubblico<small>Visibile nella libreria 3D</small></span></label>
+                <label className="admin-editor-toggle"><input type="checkbox" checked={editFeatured} onChange={(event) => setEditFeatured(event.target.checked)} /><span>Modello iniziale<small>Si apre per primo</small></span></label>
+                {modelFormat(selectedModel) === "GLB" && <label className="admin-editor-toggle"><input type="checkbox" checked={editWatch} onChange={(event) => setEditWatch(event.target.checked)} /><span>Movimento orologio<small>Ora locale per hourshand_pivot, minuteshand_pivot e secondshand_pivot</small></span></label>}
               </div>
-              <label className="block text-[11px]">
-                {selectedModel.hdri_storage_path ? "REPLACE HDR / EXR" : "CHOOSE HDR / EXR"}
-                <input
-                  ref={hdriFileRef}
-                  type="file"
-                  accept={hdriFileAccept}
-                  disabled={busy}
-                  onChange={(event) =>
-                    void handleHdriReplace(event.target.files?.[0])
-                  }
-                  className="mt-2 block min-w-0 text-[12px]"
-                />
-              </label>
-              <p className="mt-2 text-[10px] leading-relaxed text-black/45">
-                The file stays private. Public PBR receives a temporary signed URL.
-              </p>
-            </div>
+            </details>
 
-            <div className="flex flex-wrap gap-3">
-              <button type="submit" disabled={busy} className={buttonClass}>
-                SAVE MODEL
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void handleDelete()}
-                className={`${buttonClass} border-red-700 text-red-700`}
-              >
-                DELETE MODEL + FILE
-              </button>
+            <details className="admin-editor-group">
+              <summary><span>Materiale e luce<small>{isStlModel(selectedModel) ? "Colore STL e ambiente HDRI" : "Ambiente HDRI per il render PBR"}</small></span><span aria-hidden="true">＋</span></summary>
+              <div className="admin-editor-fields">
+                {isStlModel(selectedModel) && <div>
+                  <BookBackgroundColorPicker key={`${selectedModel.id}-${selectedModel.file_name}`} value={editPlasterColor} onChange={setEditPlasterColor} legend="Colore materiale STL" ariaLabel="Colore materiale STL" />
+                  <p className="admin-editor-help">Colore del materiale in PBR. Arctic resta neutro; Pen resta bianco e nero.</p>
+                </div>}
+                <div className="admin-editor-file">
+                  <p className="admin-editor-eyebrow">Ambiente PBR</p>
+                  <p className="admin-editor-filename">{selectedModel.hdri_file_name ?? "Studio neutro predefinito"}</p>
+                  <label>{selectedModel.hdri_storage_path ? "Sostituisci HDR / EXR" : "Carica HDR / EXR"}<input ref={hdriFileRef} type="file" accept={hdriFileAccept} disabled={busy} onChange={(event) => void handleHdriReplace(event.target.files?.[0])} /></label>
+                  <p className="admin-editor-help">Il caricamento parte subito. Il file resta privato.</p>
+                  {selectedModel.hdri_storage_path && <button type="button" disabled={busy} onClick={() => void handleHdriRemove()} className={buttonClass}>Usa studio predefinito</button>}
+                </div>
+              </div>
+            </details>
+
+            <details className="admin-editor-group">
+              <summary><span>Sostituisci file 3D<small>GLB, STL, STEP o STP</small></span><span aria-hidden="true">＋</span></summary>
+              <div className="admin-editor-fields">
+                <label>Nuovo file<input ref={replaceFileRef} type="file" accept={modelFileAccept} disabled={busy} onChange={(event) => void handleReplace(event.target.files?.[0])} /></label>
+                <p className="admin-editor-help">La sostituzione parte subito dopo la scelta del file.</p>
+              </div>
+            </details>
+
+            <details className="admin-editor-group admin-editor-danger">
+              <summary><span>Elimina modello<small>Operazione definitiva, richiede conferma</small></span><span aria-hidden="true">＋</span></summary>
+              <div className="admin-editor-fields"><p>Rimuove il modello e i suoi file.</p><button type="button" disabled={busy} onClick={() => void handleDelete()} className={`${buttonClass} text-red-700`}>Elimina modello e file</button></div>
+            </details>
+
+            <div className="admin-model-savebar admin-editor-savebar">
+              <span>{busy || categoryBusy ? "Operazione in corso…" : "Testi e impostazioni si applicano al salvataggio."}</span>
+              <button type="submit" disabled={busy || categoryBusy} className="admin-primary-action">{busy ? "Attendi…" : "Salva modello"}</button>
             </div>
           </form>
         )}

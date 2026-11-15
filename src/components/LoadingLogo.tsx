@@ -1,9 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import wolfy from "@/Portrait/WolfyLight.gif";
-import { useProgress } from "@react-three/drei";
+
+const LoadingLogoProgress = lazy(() => import("./LoadingLogoProgress"));
 
 interface LoadingLogoProps {
   onComplete: () => void;
+  logoUrl?: string | null;
+  autoCompleteAfter?: number;
+  showProgress?: boolean;
 }
 
 const ENTRY_DELAY = 100;
@@ -11,7 +15,10 @@ const ALLOW_EXIT_DELAY = 500;
 const AUTO_TIMEOUT = 14000;
 const EXIT_ANIM_DURATION = 400;
 
-const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
+const LoadingLogo = ({ onComplete, logoUrl, autoCompleteAfter = AUTO_TIMEOUT, showProgress = true }: LoadingLogoProps) => {
+  const [logoFailed, setLogoFailed] = useState(false);
+  const imageSource = logoFailed ? wolfy : logoUrl || wolfy;
+  const isDefaultLogo = imageSource === wolfy;
   const [imageLoaded, setImageLoaded] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [allowExit, setAllowExit] = useState(false);
@@ -19,33 +26,34 @@ const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
   const [imgSize, setImgSize] = useState<{ w?: number; h?: number }>({});
   const [displayProgress, setDisplayProgress] = useState(0);
   const [showPercent, setShowPercent] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const displayedProgressRef = useRef(0);
 
   const timers = useRef<{ entry?: number; allowExit?: number; auto?: number; fallback?: number }>({});
   const animElRef = useRef<HTMLDivElement | null>(null);
   const completeCalled = useRef(false);
   const prefersReducedMotion = useRef(false);
 
-  // Drei's useProgress hook
-  const { progress } = useProgress();
-
-  // Smooth progress interpolation
+  // The home splash has no 3D/progress dependency or animation-frame loop.
+  // Optional 3D consumers subscribe through the lazy bridge below.
   useEffect(() => {
-    let raf: number;
+    if (!showProgress) return;
+    let raf = 0;
+    let hideTimer = 0;
     const update = () => {
-      setDisplayProgress((prev) => {
-        const diff = progress - prev;
-        const step = Math.max(diff * 0.1, diff > 0 ? 0.5 : -0.5); // smooth easing
-        const next = Math.abs(diff) < 0.5 ? progress : prev + step;
-        if (next >= 100) {
-          setTimeout(() => setShowPercent(false), 500); // hide after short delay
-        }
-        return Math.min(100, Math.max(0, next));
-      });
-      raf = requestAnimationFrame(update);
+      const previous = displayedProgressRef.current;
+      const diff = progress - previous;
+      const step = Math.max(diff * 0.1, diff > 0 ? 0.5 : -0.5);
+      const next = Math.min(100, Math.max(0, Math.abs(diff) < 0.5 ? progress : previous + step));
+      displayedProgressRef.current = next;
+      setDisplayProgress(next);
+      if (next !== progress) raf = requestAnimationFrame(update);
+      else if (next >= 100) hideTimer = window.setTimeout(() => setShowPercent(false), 500);
     };
-    raf = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(raf);
-  }, [progress]);
+    if (displayedProgressRef.current !== progress) raf = requestAnimationFrame(update);
+    else if (progress >= 100) hideTimer = window.setTimeout(() => setShowPercent(false), 500);
+    return () => { cancelAnimationFrame(raf); window.clearTimeout(hideTimer); };
+  }, [progress, showProgress]);
 
   // Reduced motion detection
   useEffect(() => {
@@ -59,18 +67,23 @@ const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
   // Preload GIF
   useEffect(() => {
     const img = new Image();
-    img.src = wolfy;
+    img.fetchPriority = isDefaultLogo ? "high" : "auto";
+    img.decoding = "async";
+    let active = true;
     const safeSetSize = () => setImgSize({ w: img.naturalWidth || 400, h: img.naturalHeight || 400 });
-    img.decode?.().then(() => {
+    const loaded = () => {
+      if (!active) return;
       safeSetSize();
       setImageLoaded(true);
-    }).catch(() => {
-      img.onload = () => {
-        safeSetSize();
-        setImageLoaded(true);
-      };
-    });
-  }, []);
+    };
+    img.onload = loaded;
+    img.onerror = () => {
+      if (active) setLogoFailed(true);
+    };
+    img.src = imageSource;
+    if (img.complete && img.naturalWidth > 0) loaded();
+    return () => { active = false; };
+  }, [imageSource, isDefaultLogo]);
 
   const triggerExit = useCallback(() => {
     if (completeCalled.current) return;
@@ -115,13 +128,13 @@ const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
     } else {
       scheduledTimers.entry = window.setTimeout(() => setHasStarted(true), ENTRY_DELAY);
       scheduledTimers.allowExit = window.setTimeout(() => setAllowExit(true), ALLOW_EXIT_DELAY);
-      scheduledTimers.auto = window.setTimeout(() => triggerExit(), AUTO_TIMEOUT);
+      scheduledTimers.auto = window.setTimeout(() => triggerExit(), autoCompleteAfter);
     }
 
     return () => {
       Object.values(scheduledTimers).forEach((timer) => timer && clearTimeout(timer));
     };
-  }, [imageLoaded, triggerExit]);
+  }, [autoCompleteAfter, imageLoaded, triggerExit]);
 
   const handleClick = () => {
     if (allowExit || prefersReducedMotion.current) triggerExit();
@@ -137,10 +150,11 @@ const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
       style={{ willChange: "opacity" }}
       onClick={handleClick}
     >
+      {showProgress && <Suspense fallback={null}><LoadingLogoProgress onProgress={setProgress} /></Suspense>}
       <div
         className={`relative ${animClass}`}
         ref={animElRef}
-        style={{ width: "30rem", height: "30rem", display: "flex", alignItems: "center", justifyContent: "center" }}
+        style={{ width: "min(30rem, 80vw)", height: "min(30rem, 80vw)", display: "flex", alignItems: "center", justifyContent: "center" }}
       >
         {/* Pulsating halo */}
         <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -149,17 +163,19 @@ const LoadingLogo = ({ onComplete }: LoadingLogoProps) => {
         </span>
 
         <img
-          src={wolfy}
-          alt="Loading wolf"
+          src={imageSource}
+          {...{ fetchpriority: isDefaultLogo ? "high" : "auto" }}
+          decoding="async"
+          alt="Studier Zimmer"
           width={imgSize.w || 800}
           height={imgSize.h || 800}
           className="object-contain relative z-10 select-none pointer-events-none"
-          style={{ width: "30rem", height: "30rem", display: "block" }}
+          style={{ width: "100%", height: "100%", display: "block" }}
         />
       </div>
 
       {/* Percentage (disappears at 100%) */}
-      {showPercent && (
+      {showProgress && showPercent && (
         <div
           className={`mt-4 flex text-gray-700 dark:text-gray-200 text-xl font-bold transition-opacity duration-500 ${
             displayProgress >= 100 ? "opacity-0" : "opacity-100"

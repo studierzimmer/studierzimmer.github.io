@@ -7,21 +7,32 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree, type RootState } from "@react-three/fiber";
 import { Sky, useGLTF } from "@react-three/drei";
-import { SkeletonUtils, Water } from "three-stdlib";
+import { SkeletonUtils, Water, type Sky as SkyObject } from "three-stdlib";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Character3D } from "@/types/characters3d";
+import OceanEnvironmentController, { oceanEnvironmentState } from "@/components/ocean/OceanEnvironmentController";
+import { useOceanCharacterCamera } from "@/components/ocean/useOceanCharacterCamera";
 
 const keys: Record<string, boolean> = {};
 
-if (typeof window !== "undefined") {
-  window.addEventListener("keydown", (event) => {
-    keys[event.key.toLowerCase()] = true;
-  });
-  window.addEventListener("keyup", (event) => {
-    keys[event.key.toLowerCase()] = false;
-  });
+function isOceanRenderActive(): boolean {
+  if (typeof document === "undefined" || document.hidden || document.visibilityState === "hidden") return false;
+  const host = document.getElementById("global-sky-ocean-bg");
+  return Boolean(host && host.style.display !== "none" && host.getAttribute("data-render-active") === "1");
+}
+
+function setOceanFrameloop(state: RootState | null, active: boolean, elapsed: { current: number }): void {
+  const current = state?.get();
+  const mode = active ? "always" : "never";
+  if (!current || current.frameloop === mode) return;
+  if (!active) elapsed.current = current.clock.elapsedTime;
+  current.setFrameloop(mode);
+  // R3F restarts its clock when switching loop modes. Keep the ocean's phase
+  // and exclude hidden time instead of restarting shaders or jumping physics.
+  current.clock.elapsedTime = elapsed.current;
+  if (active) current.invalidate();
 }
 
 const playerRef = { current: null as THREE.Group | null };
@@ -1068,6 +1079,12 @@ function CharacterSurfaceWake() {
 
 function SeaFloor() {
   const causticsMap = useCausticsTexture();
+  const glow = useMemo(() => ({
+    player: { value: new THREE.Vector3(0, PLAYER_GROUND_Y, 0) },
+    color: { value: new THREE.Color("#D3B65C") },
+    strength: { value: .65 },
+    radius: { value: 150 },
+  }), []);
   const material = useMemo(() => {
     const floorMaterial = new THREE.MeshStandardMaterial({
       color: "#315057",
@@ -1076,13 +1093,37 @@ function SeaFloor() {
       side: THREE.DoubleSide,
     });
     addUnderwaterCaustics(floorMaterial, causticsMap);
+    const previousCompile = floorMaterial.onBeforeCompile.bind(floorMaterial);
+    const previousKey = floorMaterial.customProgramCacheKey.bind(floorMaterial);
+    floorMaterial.onBeforeCompile = (shader, renderer) => {
+      previousCompile(shader, renderer);
+      shader.uniforms.oceanGlowPlayer = glow.player;
+      shader.uniforms.oceanGlowColor = glow.color;
+      shader.uniforms.oceanGlowStrength = glow.strength;
+      shader.uniforms.oceanGlowRadius = glow.radius;
+      shader.fragmentShader = `uniform vec3 oceanGlowPlayer;
+        uniform vec3 oceanGlowColor;
+        uniform float oceanGlowStrength;
+        uniform float oceanGlowRadius;
+        ${shader.fragmentShader}`.replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
+          vec2 floorFromPlayer = vCausticsWorldPosition.xz - oceanGlowPlayer.xz;
+          float floorGlowFalloff = exp(-dot(floorFromPlayer, floorFromPlayer) / max(1.0, oceanGlowRadius * oceanGlowRadius) * 2.5);
+          float floorGlowHeight = mix(0.45, 1.0, exp(-abs(oceanGlowPlayer.y - vCausticsWorldPosition.y) / 260.0));
+          totalEmissiveRadiance += oceanGlowColor * oceanGlowStrength * floorGlowFalloff * floorGlowHeight;`);
+    };
+    floorMaterial.customProgramCacheKey = () => `${previousKey()}-character-floor-glow-v1`;
     return floorMaterial;
-  }, [causticsMap]);
+  }, [causticsMap, glow]);
 
   useEffect(() => () => material.dispose(), [material]);
 
   useFrame((state) => {
     causticsTimeUniform.value = state.clock.elapsedTime;
+    const environment = oceanEnvironmentState.current;
+    if (playerRef.current) glow.player.value.copy(playerRef.current.position);
+    glow.color.value.set(environment.floorGlowColor);
+    glow.strength.value = environment.floorGlowStrength;
+    glow.radius.value = environment.floorGlowRadius;
   });
 
   return (
@@ -1294,7 +1335,7 @@ function RisingBubbleFields() {
 
 function UnderwaterSurface() {
   const ref = useRef<THREE.Mesh>(null);
-  const { camera } = useThree();
+  const { camera, gl, scene } = useThree();
   const waterNormals = useLoader(
     THREE.TextureLoader,
     `${import.meta.env.BASE_URL}waternormals.jpeg`
@@ -1384,6 +1425,11 @@ function UnderwaterSurface() {
   );
 
   useEffect(() => () => material.dispose(), [material]);
+  useEffect(() => {
+    // Compile the hidden underside before the first dive, not while crossing
+    // the waterline. compileAsync traverses this object without displaying it.
+    if (ref.current) void gl.compileAsync(ref.current, camera, scene).catch(() => undefined);
+  }, [camera, gl, material, scene]);
   useFrame((state) => {
     material.uniforms.time.value = state.clock.elapsedTime;
     material.uniforms.rippleCenter.value.copy(rippleField.center);
@@ -1464,6 +1510,14 @@ function UnderwaterController() {
   const mixedColor = useMemo(() => new THREE.Color(), []);
   const fog = useMemo(() => new THREE.FogExp2("#0a5273", 0), []);
 
+  useLayoutEffect(() => {
+    const previousFog = scene.fog;
+    // Keep the same shader variant on both sides of the surface. At density
+    // zero FogExp2 is visually neutral; swapping null/fog recompiles materials.
+    scene.fog = fog;
+    return () => { if (scene.fog === fog) scene.fog = previousFog; };
+  }, [fog, scene]);
+
   useFrame((_, delta) => {
     const underwater = camera.position.y < SEA_LEVEL_Y - 0.45;
     underwaterAmount.current = THREE.MathUtils.damp(
@@ -1476,12 +1530,15 @@ function UnderwaterController() {
     mixedColor.lerpColors(aboveColor, belowColor, amount);
     scene.background = mixedColor;
     fog.density = amount * 0.0028;
-    scene.fog = amount > 0.003 ? fog : null;
 
     if (wasUnderwater.current === null) {
       wasUnderwater.current = underwater;
+      document.getElementById("global-sky-ocean-bg")?.setAttribute("data-underwater", underwater ? "1" : "0");
+      window.dispatchEvent(new CustomEvent("ocean-depth-state", { detail: { underwater } }));
     } else if (underwater !== wasUnderwater.current) {
       wasUnderwater.current = underwater;
+      document.getElementById("global-sky-ocean-bg")?.setAttribute("data-underwater", underwater ? "1" : "0");
+      window.dispatchEvent(new CustomEvent("ocean-depth-state", { detail: { underwater } }));
       window.dispatchEvent(
         new CustomEvent("ocean-surface-cross", { detail: { underwater } })
       );
@@ -1490,7 +1547,6 @@ function UnderwaterController() {
 
   useEffect(
     () => () => {
-      scene.fog = null;
       scene.background = aboveColor;
     },
     [aboveColor, scene]
@@ -1524,7 +1580,7 @@ function UnderwaterFillLight() {
 }
 
 function AtmosphereSky() {
-  const ref = useRef<THREE.Mesh>(null);
+  const ref = useRef<SkyObject>(null);
   const opacity = useRef(1);
   const { camera } = useThree();
 
@@ -1972,6 +2028,7 @@ function Player() {
       );
     };
     const rollWithKeyboard = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]")) return;
       if (event.repeat) return;
       const key = event.key.toLowerCase();
       if (key !== "z" && key !== "x") return;
@@ -2319,77 +2376,8 @@ function Player() {
 }
 
 function CameraRig() {
-  const { camera } = useThree();
-  const cameraAngle = useRef(0);
-  const blend = useRef(0);
-  const explore = useRef(false);
-  const cameraDistance = useRef(70);
-  const cameraHeight = useRef(22);
-  const lookHeight = useRef(6);
-
-  useEffect(() => {
-    const handler = (event: Event) => {
-      explore.current = (
-        event as CustomEvent<{ enabled: boolean }>
-      ).detail.enabled;
-    };
-    window.addEventListener("explore-mode", handler);
-    return () => window.removeEventListener("explore-mode", handler);
-  }, []);
-
-  useFrame((_, delta) => {
-    const player = playerRef.current;
-    if (!player) return;
-
-    blend.current += delta * (explore.current ? 1 : -1);
-    blend.current = THREE.MathUtils.clamp(blend.current, 0, 1);
-    const ease = blend.current * blend.current * (3 - 2 * blend.current);
-    const keyX =
-      (keys.arrowright || keys.d ? 1 : 0) -
-      (keys.arrowleft || keys.a ? 1 : 0);
-    const strafe = keyX + (player.userData?.joyX ?? 0);
-
-    if (Math.abs(strafe) > 0.05) cameraAngle.current -= strafe * delta * 2.5;
-
-    cameraDistance.current = THREE.MathUtils.damp(
-      cameraDistance.current,
-      Number(player.userData?.cameraDistance) || 70,
-      3.5,
-      delta
-    );
-    cameraHeight.current = THREE.MathUtils.damp(
-      cameraHeight.current,
-      Number(player.userData?.cameraHeight) || 22,
-      3.5,
-      delta
-    );
-    lookHeight.current = THREE.MathUtils.damp(
-      lookHeight.current,
-      Number(player.userData?.lookHeight) || 6,
-      3.5,
-      delta
-    );
-
-    const offset = new THREE.Vector3(
-      0,
-      cameraHeight.current,
-      cameraDistance.current
-    );
-    offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngle.current);
-    const followPosition = player.position.clone().add(offset);
-    const introPosition = new THREE.Vector3(0, 20, 100).add(
-      new THREE.Vector3(Math.sin(blend.current * Math.PI) * 20, 0, 0)
-    );
-    const finalPosition = introPosition.lerp(followPosition, ease);
-
-    camera.position.lerp(finalPosition, 0.12);
-
-    const introLook = new THREE.Vector3(0, 5, 0);
-    const followLook = player.position.clone();
-    followLook.y += lookHeight.current;
-    camera.lookAt(introLook.lerp(followLook, ease));
-  });
-
+  const { scene, camera, gl } = useThree();
+  useOceanCharacterCamera({ scene, camera, gl, playerRef, keys, isActive: isOceanRenderActive });
   return null;
 }
 
@@ -2434,6 +2422,7 @@ function OceanSoundscape() {
     };
 
     const activate = async () => {
+      if (!isOceanRenderActive()) return;
       desiredActiveRef.current = true;
 
       try {
@@ -2441,6 +2430,10 @@ function OceanSoundscape() {
           await audio.play();
         }
 
+        if (!desiredActiveRef.current || !isOceanRenderActive() || window.location.pathname !== "/navigate") {
+          audio.pause();
+          return;
+        }
         fadeTo(0.14, 2400);
       } catch {
         // Browser will retry after first user interaction.
@@ -2449,13 +2442,16 @@ function OceanSoundscape() {
 
     const deactivate = () => {
       desiredActiveRef.current = false;
-      fadeTo(0, 1800);
+      window.cancelAnimationFrame(fadeFrame);
+      audio.pause();
+      audio.volume = 0;
+      audio.currentTime = 0;
     };
 
     const handleAudioState = (
       event: Event
     ) => {
-      const active = (event as CustomEvent<{ active: boolean }>).detail.active;
+      const active = isOceanRenderActive() && window.location.pathname === "/navigate" && (event as CustomEvent<{ active: boolean }>).detail.active;
 
       if (active) {
         void activate();
@@ -2465,7 +2461,7 @@ function OceanSoundscape() {
     };
 
     const unlock = () => {
-      if (desiredActiveRef.current) {
+      if (desiredActiveRef.current && isOceanRenderActive()) {
         void activate();
       }
     };
@@ -2475,7 +2471,7 @@ function OceanSoundscape() {
     window.addEventListener("keydown", unlock);
 
     if (
-      document
+      isOceanRenderActive() && document
         .getElementById("global-sky-ocean-bg")
         ?.getAttribute("data-audio-active") === "1"
     ) {
@@ -2498,27 +2494,31 @@ function OceanSoundscape() {
 
 function AircraftEngineSound() {
   useEffect(() => {
+    let disposed = false;
     const audioContext = new AudioContext();
     const engineGain = audioContext.createGain();
     engineGain.gain.value = 0;
     engineGain.connect(audioContext.destination);
-    const bufferPromise = fetch(
-      `${import.meta.env.BASE_URL}cessna-engine.wav`
-    )
-      .then((response) => response.arrayBuffer())
-      .then((buffer) => audioContext.decodeAudioData(buffer));
+    let bufferPromise: Promise<AudioBuffer> | null = null;
     let source: AudioBufferSourceNode | null = null;
     let currentCharacterId = "";
     let throttle = 0;
+    let renderActive = isOceanRenderActive();
     let exploreActive =
       document
         .getElementById("global-sky-ocean-bg")
         ?.getAttribute("data-explore") === "1";
 
     const ensureSource = async () => {
-      if (source) return;
+      if (disposed || source || !renderActive) return;
+      // The default figure has no engine: fetch/decode this full-quality sound
+      // only when an aircraft actually needs it.
+      bufferPromise ??= fetch(`${import.meta.env.BASE_URL}cessna-engine.wav`)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) => audioContext.decodeAudioData(buffer))
+        .catch((error) => { bufferPromise = null; throw error; });
       const buffer = await bufferPromise;
-      if (audioContext.state === "closed") return;
+      if (disposed || source || audioContext.state === "closed" || !renderActive || !exploreActive || !currentCharacterId.includes("cessna-aircraft")) return;
       source = audioContext.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
@@ -2528,20 +2528,35 @@ function AircraftEngineSound() {
     };
 
     const update = async () => {
+      if (disposed) return;
       const shouldPlay =
-        exploreActive && currentCharacterId.includes("cessna-aircraft");
+        renderActive && exploreActive && currentCharacterId.includes("cessna-aircraft");
       const now = audioContext.currentTime;
       engineGain.gain.cancelScheduledValues(now);
       engineGain.gain.setValueAtTime(engineGain.gain.value, now);
 
+      if (!renderActive) {
+        engineGain.gain.setValueAtTime(0, now);
+        if (audioContext.state === "running") await audioContext.suspend().catch(() => undefined);
+        return;
+      }
+
       if (shouldPlay) {
-        if (audioContext.state === "suspended") {
-          await audioContext.resume();
+        try {
+          if (audioContext.state === "suspended") await audioContext.resume();
+          await ensureSource();
+        } catch {
+          return; // A later user interaction can retry the optional sound.
         }
-        await ensureSource();
+        if (disposed) return;
+        if (!renderActive || !isOceanRenderActive() || !exploreActive || !currentCharacterId.includes("cessna-aircraft")) {
+          engineGain.gain.setValueAtTime(0, audioContext.currentTime);
+          if (!renderActive && audioContext.state === "running") await audioContext.suspend().catch(() => undefined);
+          return;
+        }
         engineGain.gain.linearRampToValueAtTime(
           0.2 + throttle * 0.07,
-          now + 0.7
+          audioContext.currentTime + 0.7
         );
       } else {
         engineGain.gain.linearRampToValueAtTime(0, now + 0.55);
@@ -2574,7 +2589,7 @@ function AircraftEngineSound() {
         now,
         throttle > 0.45 ? 0.16 : 0.28
       );
-      if (exploreActive && currentCharacterId.includes("cessna-aircraft")) {
+      if (renderActive && exploreActive && currentCharacterId.includes("cessna-aircraft")) {
         engineGain.gain.cancelScheduledValues(now);
         engineGain.gain.setTargetAtTime(
           0.2 + throttle * 0.07,
@@ -2586,17 +2601,21 @@ function AircraftEngineSound() {
     const unlock = () => {
       void update();
     };
+    const onActivity = () => { renderActive = isOceanRenderActive(); void update(); };
 
     window.addEventListener("ocean-active-character-change", onCharacter);
     window.addEventListener("explore-mode", onExplore);
     window.addEventListener("ocean-aircraft-throttle", onThrottle);
+    window.addEventListener("skyocean-activity", onActivity);
     window.addEventListener("pointerdown", unlock, { passive: true });
     window.addEventListener("keydown", unlock);
 
     return () => {
+      disposed = true;
       window.removeEventListener("ocean-active-character-change", onCharacter);
       window.removeEventListener("explore-mode", onExplore);
       window.removeEventListener("ocean-aircraft-throttle", onThrottle);
+      window.removeEventListener("skyocean-activity", onActivity);
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
       source?.stop();
@@ -2617,6 +2636,7 @@ function SurfaceCrossingSound() {
     let audioContext: AudioContext | null = null;
 
     const playCrossing = (event: Event) => {
+      if (!isOceanRenderActive()) return;
       const underwater = (
         event as CustomEvent<{ underwater: boolean }>
       ).detail.underwater;
@@ -2629,6 +2649,7 @@ function SurfaceCrossingSound() {
     };
 
     const playHeavyBlop = (event: Event) => {
+      if (!isOceanRenderActive()) return;
       const { submerging, speed } = (
         event as CustomEvent<{
           submerging: boolean;
@@ -2659,10 +2680,18 @@ function SurfaceCrossingSound() {
       oscillator.stop(now + 0.46);
     };
 
+    const stopWhenInactive = () => {
+      if (isOceanRenderActive()) return;
+      audio.pause();
+      audio.currentTime = 0;
+      if (audioContext?.state === "running") void audioContext.suspend().catch(() => undefined);
+    };
+    window.addEventListener("skyocean-activity", stopWhenInactive);
     window.addEventListener("ocean-surface-cross", playCrossing);
     window.addEventListener("ocean-player-splash", playHeavyBlop);
     return () => {
       window.removeEventListener("ocean-surface-cross", playCrossing);
+      window.removeEventListener("skyocean-activity", stopWhenInactive);
       window.removeEventListener("ocean-player-splash", playHeavyBlop);
       audio.pause();
       audio.src = "";
@@ -2675,13 +2704,68 @@ function SurfaceCrossingSound() {
   return null;
 }
 
-export default function SkyOceanBackground() {
+export default function SkyOceanBackground({ laboratory = false }: { laboratory?: boolean } = {}) {
+  const [active, setActive] = useState(isOceanRenderActive);
+  const renderState = useRef<RootState | null>(null);
+  const elapsed = useRef(0);
+  const syncActivity = useRef<() => void>(() => undefined);
+
+  useLayoutEffect(() => {
+    let previous: boolean | null = null;
+    const sync = () => {
+      const next = isOceanRenderActive();
+      setOceanFrameloop(renderState.current, next, elapsed);
+      if (previous === next) return;
+      previous = next;
+      setActive(next);
+      const host = document.getElementById("global-sky-ocean-bg");
+      window.dispatchEvent(new CustomEvent("skyocean-activity", { detail: { active: next } }));
+      window.dispatchEvent(new CustomEvent("skyocean-audio", { detail: { active: next && host?.getAttribute("data-audio-active") === "1" } }));
+      window.dispatchEvent(new CustomEvent("explore-mode", { detail: { enabled: next && host?.getAttribute("data-explore") === "1" } }));
+      if (!next) {
+        Object.keys(keys).forEach((key) => { keys[key] = false; });
+        window.dispatchEvent(new CustomEvent("explore-joystick", { detail: { x: 0, z: 0 } }));
+        window.dispatchEvent(new CustomEvent("explore-vertical", { detail: { y: 0 } }));
+        window.dispatchEvent(new CustomEvent("explore-sprint", { detail: { active: false } }));
+      }
+    };
+    syncActivity.current = sync;
+    window.addEventListener("skyocean-render", sync);
+    document.addEventListener("visibilitychange", sync);
+    const host = document.getElementById("global-sky-ocean-bg");
+    const observer = new MutationObserver(sync);
+    if (host) observer.observe(host, { attributes: true, attributeFilter: ["style", "data-render-active"] });
+    sync();
+    return () => {
+      window.removeEventListener("skyocean-render", sync);
+      document.removeEventListener("visibilitychange", sync);
+      observer.disconnect();
+      syncActivity.current = () => undefined;
+      setOceanFrameloop(renderState.current, false, elapsed);
+    };
+  }, []);
+
+  useEffect(() => {
+    const keyDown = (event: KeyboardEvent) => {
+      if (!isOceanRenderActive() || (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]"))) return;
+      keys[event.key.toLowerCase()] = true;
+    };
+    const keyUp = (event: KeyboardEvent) => { keys[event.key.toLowerCase()] = false; };
+    const clear = () => { Object.keys(keys).forEach((key) => { keys[key] = false; }); };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", clear);
+    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); window.removeEventListener("blur", clear); clear(); };
+  }, []);
+
   return (
     <>
       <OceanSoundscape />
       <AircraftEngineSound />
       <SurfaceCrossingSound />
       <Canvas
+        frameloop={active ? "always" : "never"}
+        onCreated={(state) => { renderState.current = state; syncActivity.current(); }}
         shadows
         dpr={[1, 1.5]}
         camera={{
@@ -2730,10 +2814,16 @@ export default function SkyOceanBackground() {
         <CameraRig />
         <OceanInteractionController />
         <UnderwaterController />
+        <OceanEnvironmentController disabled={laboratory} />
       </Canvas>
     </>
   );
 }
 
-useGLTF.preload(`${import.meta.env.BASE_URL}wolfy.glb`);
-useGLTF.preload(`${import.meta.env.BASE_URL}island.gltf`);
+let oceanAssetsRequested = false;
+export function preloadOceanAssets(): void {
+  if (oceanAssetsRequested) return;
+  oceanAssetsRequested = true;
+  useGLTF.preload(`${import.meta.env.BASE_URL}wolfy.glb`);
+  useGLTF.preload(`${import.meta.env.BASE_URL}island.gltf`);
+}

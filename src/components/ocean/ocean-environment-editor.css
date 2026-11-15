@@ -1,0 +1,9 @@
+.ocean-environment-editor { position:fixed; z-index:4; top:max(88px,calc(env(safe-area-inset-top) + 74px)); right:max(20px,env(safe-area-inset-right)); width:min(320px,calc(100vw - 40px)); max-height:calc(100dvh - 270px); overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; pointer-events:auto; background:rgb(234 239 239 / .88); color:#293c44; padding:18px; font-size:11px; backdrop-filter:blur(12px); }
+.ocean-environment-editor p { margin:0 0 15px; letter-spacing:.05em; }
+.ocean-environment-colors { display:flex; gap:12px; margin-bottom:10px; }
+.ocean-environment-colors label { flex:1; min-width:0; font-size:10px; }
+.ocean-environment-editor input { pointer-events:auto; display:block; width:100%; min-height:44px; border:0; border-radius:0; padding:0; background:transparent; }
+.ocean-environment-range { display:grid; grid-template-columns:1fr auto; align-items:center; gap:3px 8px; }
+.ocean-environment-range input { grid-column:1 / -1; accent-color:#46616b; }
+.ocean-environment-editor output { font-variant-numeric:tabular-nums; opacity:.65; }
+.ocean-environment-editor small { display:block; margin-top:8px; font-size:9px; line-height:1.6; }

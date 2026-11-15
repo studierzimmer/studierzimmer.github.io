@@ -1,9 +1,5 @@
 import { MODEL_BUCKET, supabase } from "@/lib/supabase";
-import {
-  convertStepToGlb,
-  isStepFile,
-  type ModelProcessingCallback,
-} from "@/services/stepModelConverter";
+import type { ModelProcessingCallback } from "@/services/stepModelConverter";
 import type {
   ThreeDModel,
   UpdateThreeDModelInput,
@@ -11,6 +7,8 @@ import type {
 
 const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 const MODEL_URL_LIFETIME_SECONDS = 15 * 60;
+const MODEL_URL_REFRESH_MARGIN_MS = 30 * 1000;
+const MAX_CACHED_MODEL_URLS = 256;
 const PUBLIC_MODEL_COLUMNS = [
   "id",
   "name",
@@ -31,6 +29,36 @@ const LEGACY_PUBLIC_MODEL_COLUMNS = PUBLIC_MODEL_COLUMNS.replace(",is_watch", ""
 
 type ModelFileExtension = "glb" | "stl" | "step" | "stp";
 type ThreeDModelRow = Omit<ThreeDModel, "public_url" | "hdri_public_url">;
+interface ModelAuthorization { token: string | null; generation: number }
+const signedModelUrls = new Map<string, { url: string; expiresAt: number }>();
+const pendingModelUrls = new Map<string, Promise<string>>();
+let authorizationToken: string | null | undefined;
+let authorizationGeneration = 0;
+
+function observeAuthorization(token: string | null) {
+  if (authorizationToken === token) return;
+  authorizationToken = token;
+  authorizationGeneration++;
+  signedModelUrls.clear();
+  pendingModelUrls.clear();
+}
+
+// Cached capabilities must never cross login, logout, or token/role changes.
+// Keep this callback synchronous: querying auth from inside it can deadlock the
+// client's session lock. Each read below independently checks the local session.
+supabase.auth.onAuthStateChange((_event, session) => observeAuthorization(session?.access_token ?? null));
+
+async function modelAuthorization(): Promise<ModelAuthorization> {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw asError(error, "Unable to verify the 3D model session.");
+  const token = data.session?.access_token ?? null;
+  observeAuthorization(token);
+  return { token, generation: authorizationGeneration };
+}
+
+function currentAuthorization(authorization: ModelAuthorization) {
+  return authorization.generation === authorizationGeneration && authorization.token === authorizationToken;
+}
 
 interface PreparedModelFiles {
   previewFile: File;
@@ -56,22 +84,40 @@ function asError(error: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
-async function signedUrlFor(storagePath: string): Promise<string> {
-  const { data, error } = await supabase.storage
-    .from(MODEL_BUCKET)
-    .createSignedUrl(storagePath, MODEL_URL_LIFETIME_SECONDS);
-
-  if (error) {
-    throw asError(error, "Unable to authorize the 3D model preview.");
+async function signedUrlFor(storagePath: string, authorization: ModelAuthorization): Promise<string> {
+  if (!currentAuthorization(authorization)) throw new Error("The model session changed. Please reload the preview.");
+  const cached = signedModelUrls.get(storagePath);
+  if (cached && cached.expiresAt > Date.now()) {
+    signedModelUrls.delete(storagePath);
+    signedModelUrls.set(storagePath, cached);
+    return cached.url;
   }
-
-  return data.signedUrl;
+  signedModelUrls.delete(storagePath);
+  const pending = pendingModelUrls.get(storagePath);
+  if (pending) return pending;
+  const requestedAt = Date.now();
+  const request = (async () => {
+    const { data, error } = await supabase.storage
+      .from(MODEL_BUCKET)
+      .createSignedUrl(storagePath, MODEL_URL_LIFETIME_SECONDS);
+    if (error) throw asError(error, "Unable to authorize the 3D model preview.");
+    // An older privileged request must not populate or return a capability after
+    // logout, even when its network response arrives after a newer session.
+    if (!currentAuthorization(authorization)) throw new Error("The model session changed. Please reload the preview.");
+    signedModelUrls.set(storagePath, { url: data.signedUrl, expiresAt: requestedAt + MODEL_URL_LIFETIME_SECONDS * 1000 - MODEL_URL_REFRESH_MARGIN_MS });
+    if (signedModelUrls.size > MAX_CACHED_MODEL_URLS) signedModelUrls.delete(signedModelUrls.keys().next().value!);
+    return data.signedUrl;
+  })();
+  pendingModelUrls.set(storagePath, request);
+  try { return await request; }
+  finally { if (pendingModelUrls.get(storagePath) === request) pendingModelUrls.delete(storagePath); }
 }
 
-async function mapModel(row: ThreeDModelRow): Promise<ThreeDModel> {
+async function mapModel(row: ThreeDModelRow, authorization?: ModelAuthorization, includeHdri = true): Promise<ThreeDModel> {
+  const session = authorization ?? await modelAuthorization();
   const [publicUrl, hdriPublicUrl] = await Promise.all([
-    signedUrlFor(row.storage_path),
-    row.hdri_storage_path ? signedUrlFor(row.hdri_storage_path) : null,
+    signedUrlFor(row.storage_path, session),
+    includeHdri && row.hdri_storage_path ? signedUrlFor(row.hdri_storage_path, session) : null,
   ]);
 
   return {
@@ -174,13 +220,16 @@ async function prepareModelFiles(
   file: File,
   onProgress?: ModelProcessingCallback
 ): Promise<PreparedModelFiles> {
-  validateModelFile(file);
+  const extension = validateModelFile(file);
 
-  if (!isStepFile(file)) {
+  if (extension !== "step" && extension !== "stp") {
     onProgress?.({ percent: 72, label: "MODEL FILE READY" });
     return { previewFile: file, sourceFile: null, sourceFormat: null };
   }
 
+  // CAD parsing/exporting is needed only for an actual STEP upload. Public
+  // metadata reads and unchanged GLB/STL uploads must never load its 3D bundle.
+  const { convertStepToGlb } = await import("@/services/stepModelConverter");
   const previewFile = await convertStepToGlb(file, onProgress);
   return { previewFile, sourceFile: file, sourceFormat: "step" };
 }
@@ -218,24 +267,29 @@ async function uploadPreparedModelFiles(
 }
 
 export async function listPublishedThreeDModels(): Promise<ThreeDModel[]> {
-  let response = await supabase
-    .from("models_3d")
-    .select(PUBLIC_MODEL_COLUMNS)
-    .eq("is_published", true)
-    .order("is_featured", { ascending: false })
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
+  return listPublishedModels();
+}
+
+/** Gallery thumbnails only need their referenced published models, and use the
+ * built-in studio lighting rather than downloading each model's custom HDRI. */
+export async function listPublishedThreeDModelsByIds(ids: readonly string[]): Promise<ThreeDModel[]> {
+  const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  return listPublishedModels(uniqueIds, false);
+}
+
+async function listPublishedModels(ids?: string[], includeHdri = true): Promise<ThreeDModel[]> {
+  const query = (columns: string) => {
+    let request = supabase.from("models_3d").select(columns).eq("is_published", true);
+    if (ids) request = request.in("id", ids);
+    return request.order("is_featured", { ascending: false }).order("sort_order", { ascending: true }).order("created_at", { ascending: true });
+  };
+  let response = await query(PUBLIC_MODEL_COLUMNS);
 
   // Keep existing published models available locally until the watch migration
   // has been applied to Supabase.
   if (response.error?.message.includes("is_watch")) {
-    response = await supabase
-      .from("models_3d")
-      .select(LEGACY_PUBLIC_MODEL_COLUMNS)
-      .eq("is_published", true)
-      .order("is_featured", { ascending: false })
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
+    response = await query(LEGACY_PUBLIC_MODEL_COLUMNS);
   }
 
   const { data, error } = response;
@@ -244,7 +298,8 @@ export async function listPublishedThreeDModels(): Promise<ThreeDModel[]> {
     throw asError(error, "Unable to load the 3D models.");
   }
 
-  return Promise.all(((data ?? []) as unknown as ThreeDModelRow[]).map(mapModel));
+  const authorization = await modelAuthorization();
+  return Promise.all(((data ?? []) as unknown as ThreeDModelRow[]).map((row) => mapModel(row, authorization, includeHdri)));
 }
 
 export async function listAllThreeDModelsForAdmin(): Promise<ThreeDModel[]> {
@@ -258,7 +313,8 @@ export async function listAllThreeDModelsForAdmin(): Promise<ThreeDModel[]> {
     throw asError(error, "Unable to load the admin 3D model list.");
   }
 
-  return Promise.all(((data ?? []) as ThreeDModelRow[]).map(mapModel));
+  const authorization = await modelAuthorization();
+  return Promise.all(((data ?? []) as ThreeDModelRow[]).map((row) => mapModel(row, authorization)));
 }
 
 export async function createThreeDModel(

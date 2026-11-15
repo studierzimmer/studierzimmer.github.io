@@ -1,8 +1,7 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import PublicBookLibrary from "@/components/books/PublicBookLibrary";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
@@ -11,22 +10,31 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  type Location,
 } from "react-router-dom";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Index from "./pages/Index";
 import {
   BOOK_INDEX_RETURN_KEY,
   BOOK_INTRO_RETURN_KEY,
   readBookSession,
 } from "@/components/books/bookSession";
 import AnalyticsConsent from "@/components/privacy/AnalyticsConsent";
+import PortfolioHome from "@/pages/PortfolioHome";
+import type { ModelCategory } from "@/types/siteContent";
+import { InlineSiteEditingProvider } from "@/components/SiteEditControl";
+import RouteChoreography from "@/components/navigation/RouteChoreography";
 
 const AdminPortal = lazy(() => import("@/components/admin/AdminPortal"));
+const PublicBookLibrary = lazy(() => import("@/components/books/PublicBookLibrary"));
+const loadOceanPage = () => import("./pages/OceanPage");
+const Index = lazy(loadOceanPage);
 const Menu = lazy(() => import("./pages/Archive"));
 const Object01 = lazy(() => import("./pages/object01"));
 const Message = lazy(() => import("./pages/Message"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const WatchStudio = lazy(() => import("./pages/WatchStudio"));
+const Bio = lazy(() => import("./pages/Bio"));
+const Artworks = lazy(() => import("./pages/Artworks"));
 
 const queryClient = new QueryClient();
 
@@ -37,7 +45,7 @@ const AdminRoute = () => {
     window.sessionStorage.setItem(BOOK_INTRO_RETURN_KEY, "true");
     window.sessionStorage.removeItem("revealDone");
     window.sessionStorage.removeItem("returnFromExample");
-    navigate("/");
+    navigate("/navigate");
   };
 
   return (
@@ -76,43 +84,68 @@ const PublicBooksRoute = () => {
   );
 };
 
-const WatchRoute = () => {
+const WatchRoute = ({ category }: { category?: ModelCategory }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const initialModelId = new URLSearchParams(location.search).get("model") ?? undefined;
+  const requestedReturn = (location.state as { returnTo?: string } | null)?.returnTo;
+  const returnTo = requestedReturn === "/artworks" || requestedReturn === "/fashion" || requestedReturn === "/featured-in" ? requestedReturn : "/";
 
   return (
     <WatchStudio
-      onNavigate={() => navigate("/")}
+      key={`${category ?? "all"}-${initialModelId ?? "library"}`}
+      category={category}
+      initialModelId={initialModelId}
+      onNavigate={() => navigate("/navigate")}
       onLogin={() => navigate("/login")}
-      onBack={() => {
-        const bookSession = readBookSession();
-
-        navigate(
-          bookSession
-            ? `/book/${encodeURIComponent(bookSession.slug)}`
-            : "/books"
-        );
-      }}
+      onBack={() => navigate(returnTo)}
     />
   );
 };
 
-const AppViewport = () => {
-  const { pathname } = useLocation();
-  const showsOceanBackground = pathname === "/";
+const DisplayedViewport = ({ location }: { location: Location }) => {
+  const { pathname } = location;
+  const showsOceanBackground = pathname === "/navigate";
+  const isAdministration = pathname === "/login" || pathname === "/admin";
+
+  useLayoutEffect(() => {
+    const appRoot = document.getElementById("root");
+    appRoot?.toggleAttribute("data-ocean-surface", showsOceanBackground);
+    const host = document.getElementById("global-sky-ocean-bg");
+    if (host) {
+      host.style.display = showsOceanBackground ? "block" : "none";
+      host.setAttribute("data-render-active", showsOceanBackground ? "1" : "0");
+      if (!showsOceanBackground) {
+        host.setAttribute("data-audio-active", "0");
+        host.setAttribute("data-explore", "0");
+      }
+    }
+    // This uses the displayed route, not the requested destination: the ocean
+    // keeps rendering until its reverse aperture has completely closed.
+    window.dispatchEvent(new CustomEvent("skyocean-render", { detail: { active: showsOceanBackground } }));
+    if (!showsOceanBackground) {
+      window.dispatchEvent(new CustomEvent("skyocean-audio", { detail: { active: false } }));
+      window.dispatchEvent(new CustomEvent("explore-mode", { detail: { enabled: false } }));
+    }
+    return () => appRoot?.removeAttribute("data-ocean-surface");
+  }, [showsOceanBackground]);
 
   return (
     <div
-      className={`fixed inset-0 overflow-hidden ${
-        showsOceanBackground ? "bg-transparent" : "bg-white dark:bg-black"
-      }`}
+      className={`fixed inset-0 overflow-hidden bg-transparent ${isAdministration ? "" : "public-display"}`}
     >
       <Toaster />
       <Sonner />
       <AnalyticsConsent />
 
       <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
-        <Routes>
-          <Route path="/" element={<Index />} />
+        <Routes location={location}>
+          <Route path="/" element={<PortfolioHome />} />
+          <Route path="/bio" element={<Bio />} />
+          <Route path="/artworks" element={<Artworks />} />
+          <Route path="/fashion" element={<Artworks fashionOnly />} />
+          <Route path="/featured-in" element={<Artworks featuredOnly />} />
+          <Route path="/navigate" element={<Index />} />
           <Route path="/archive" element={<Menu />} />
           <Route path="/message" element={<Message />} />
           <Route path="/object01" element={<Object01 />} />
@@ -120,7 +153,11 @@ const AppViewport = () => {
           <Route path="/login" element={<AdminRoute />} />
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="/3d" element={<WatchRoute />} />
+          <Route path="/horlogerie" element={<WatchRoute category="horlogerie" />} />
+          <Route path="/jewelry" element={<WatchRoute category="jewelry" />} />
+          <Route path="/models" element={<WatchRoute category="models" />} />
 
+          <Route path="/sketches" element={<PublicBooksRoute />} />
           <Route path="/books" element={<PublicBooksRoute />} />
           <Route path="/book/:slug" element={<PublicBooksRoute />} />
 
@@ -129,6 +166,16 @@ const AppViewport = () => {
       </Suspense>
     </div>
   );
+};
+
+const AppViewport = () => {
+  const destination = useLocation();
+  useEffect(() => {
+    // Warm full-resolution ocean assets only after an explicit navigation
+    // request, while the outgoing menu finishes its existing choreography.
+    if (destination.pathname === "/navigate") void loadOceanPage().then((module) => module.preloadOceanExperience()).catch(() => undefined);
+  }, [destination.pathname]);
+  return <RouteChoreography>{(location) => <DisplayedViewport location={location} />}</RouteChoreography>;
 };
 
 const App = () => (
@@ -141,7 +188,7 @@ const App = () => (
             v7_relativeSplatPath: true,
           }}
         >
-          <AppViewport />
+          <InlineSiteEditingProvider><AppViewport /></InlineSiteEditingProvider>
         </BrowserRouter>
       </TooltipProvider>
     </ThemeProvider>

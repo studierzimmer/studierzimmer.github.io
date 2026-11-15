@@ -909,7 +909,7 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    const audioActive = hasCheckedSplash && !showSplash && !revealClosing;
+    const audioActive = window.location.pathname === "/navigate" && hasCheckedSplash && !showSplash && !revealClosing;
     const host = document.getElementById("global-sky-ocean-bg");
     host?.setAttribute("data-audio-active", audioActive ? "1" : "0");
 
@@ -945,7 +945,7 @@ const Index = () => {
   useEffect(() => {
     const splashAlreadyShown = sessionStorage.getItem(STORAGE_KEYS.splash);
 
-    if (!splashAlreadyShown && stage === "intro" && !returningFromBook) {
+    if (!splashAlreadyShown && !sessionStorage.getItem("studierzimmer:splash-seen") && stage === "intro" && !returningFromBook) {
       setShowSplash(true);
     } else {
       setIntroVisible(true);
@@ -1764,23 +1764,21 @@ const Index = () => {
 
               <div className="flex items-center justify-center gap-2">
                 <button
-                  onClick={handleReturnToBook}
+                  onClick={() => navigate("/")}
                   disabled={!introItemsEntered || introLeaving}
                   className={`index-intro-control intro-elastic-item item-start ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                 >
                   <span className="animate-bounce">back</span>
                 </button>
 
-                {returnBookSession && (
                   <button
                     type="button"
                     onClick={handleStart}
                     disabled={!introItemsEntered || revealClosing}
                     className={`index-intro-control intro-elastic-item item-back ${introItemMotionClass} px-6 py-4 text-[16px] md:text-[16px] font-normal hover:scale-110 active:scale-110 transition-all`}
                   >
-                    start
+                    START
                   </button>
-                )}
               </div>
             </div>
 

@@ -14,7 +14,7 @@ interface AdminArchiveSectionManagerProps {
 const inputClass =
   "w-full border-0 border-b border-black/30 bg-transparent px-0 py-2 text-[13px] outline-none focus:border-black";
 const buttonClass =
-  "border-0 bg-transparent px-2 py-2 text-[12px] underline-offset-4 transition-transform hover:scale-[1.02] hover:underline active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
+  "border-0 bg-transparent px-2 py-2 text-[12px] disabled:cursor-not-allowed disabled:opacity-40";
 
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";

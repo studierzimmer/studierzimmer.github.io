@@ -1,0 +1,16 @@
+.book-rich-text { min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.book-rich-text p { margin:0 0 .9em; }
+.book-rich-text p:last-child { margin-bottom:0; }
+.book-rich-text strong { font-weight:650; }
+.book-rich-text em { font-style:italic; }
+.book-rich-editor { min-width:0; }
+.book-rich-toolbar { display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+.book-rich-toolbar button, .book-rich-toolbar select { min-height:40px; border:1px solid #b5bec440; border-radius:0; padding:7px 10px; background:transparent; color:inherit; font:inherit; font-size:12px; }
+.book-rich-toolbar button { min-width:40px; }
+.book-rich-toolbar select { flex:1; min-width:0; font-size:14px; }
+.book-rich-toolbar button[aria-pressed="true"] { background:#727e8520; }
+.book-rich-toolbar button:disabled { opacity:.35; }
+.book-rich-toolbar button:focus-visible, .book-rich-toolbar select:focus-visible { outline:1px solid currentColor; outline-offset:2px; }
+.book-rich-editor textarea { display:block; width:100%; min-height:95px; font:inherit; font-size:16px; line-height:1.55; resize:vertical; border-radius:0; user-select:text; -webkit-user-select:text; }
+.book-rich-editor-note { margin:7px 0; font-size:10px; line-height:1.4; color:inherit; opacity:.7; }
+.book-rich-editor-preview { max-height:140px; overflow-y:auto; overscroll-behavior:contain; padding:10px; border:1px dashed #7d899433; font-size:inherit; line-height:1.55; }

@@ -108,9 +108,9 @@ const Message = () => {
 for inquiries:<br />
 <a
   href="mailto:tostudierzimmer@gmail.com"
-  className="text-black-600 hover:underline cursor-pointer"
+  className="text-black-600 cursor-pointer"
 >
-  <u>tostudierzimmer@gmail.com</u>
+  tostudierzimmer@gmail.com
 </a>
 <br /><br />
         </div>

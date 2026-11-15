@@ -69,8 +69,6 @@ const consentStyles = `
 .privacy-consent-control:hover,
 .privacy-consent-control:focus-visible {
   color: black;
-  text-decoration: underline;
-  text-underline-offset: 4px;
 }
 
 @keyframes privacy-consent-enter {
@@ -233,7 +231,7 @@ export default function AnalyticsConsent() {
 
           <button
             type="button"
-            className="mt-3 border-0 bg-transparent p-0 text-[11px] underline underline-offset-4"
+            className="mt-3 border-0 bg-transparent p-0 text-[11px]"
             onClick={() => setDetailsOpen((open) => !open)}
             aria-expanded={detailsOpen}
           >

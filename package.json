@@ -21,6 +21,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "audit:assets": "node scripts/check-asset-integrity.mjs",
+    "audit:lighthouse": "node scripts/audit-lighthouse.mjs",
     "predeploy": "npm run build && node scripts/prepare-deploy.mjs",
     "deploy": "gh-pages -d dist -t --nojekyll --before-add ./scripts/gh-pages-before-add.cjs -r https://github.com/studierzimmer/studierzimmer.github.io.git"
   },
@@ -69,7 +71,7 @@
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
     "occt-import-js": "^0.0.23",
-    "page-flip": "^2.0.7",
+    "page-flip": "2.0.7",
     "postprocessing": "^6.39.1",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
