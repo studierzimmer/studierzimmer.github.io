@@ -4,7 +4,7 @@ import defaultLogo from "@/Portrait/WolfyLight.gif";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { DEFAULT_SITE_SETTINGS, LOCAL_CONTENT_MODE, uploadSiteAsset } from "@/services/siteContentRepository";
 import type { MenuKey, SiteSettings } from "@/types/siteContent";
-import { moveMenuItem } from "@/lib/siteMenu";
+import { activeMenuItems, moveActiveMenuItem } from "@/lib/siteMenu";
 import { DEFAULT_OCEAN_LABELS, normalizeOceanLabels, type OceanLabels } from "@/types/oceanText";
 
 interface AdminSiteSettingsProps {
@@ -155,6 +155,7 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
   const selectedSection = section ?? activeSection;
   const show = (key: AdminSiteSettingsProps["section"]) => selectedSection === key;
   const oceanLabels = normalizeOceanLabels(draft.ocean_labels);
+  const menuItems = activeMenuItems(draft.menu_items);
 
   return (
     <div className="admin-site-settings mx-auto w-full max-w-2xl text-left text-black">
@@ -191,9 +192,9 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
 
         {show("menu") && <section aria-labelledby="site-menu-heading" className="space-y-4">
           <h3 id="site-menu-heading" className="text-[14px] uppercase tracking-wider">Titoli del menu</h3>
-          <p className="text-[12px] leading-relaxed text-black/55">Apri un titolo per modificarlo, cambiarne la posizione, nasconderlo o usare un PNG con trasparenza. La destinazione resta la stessa.</p>
+          <p className="text-[12px] leading-relaxed text-black/55">Apri un titolo per modificarlo, cambiarne la posizione, nasconderlo o usare un PNG con trasparenza. Il PNG appare solo nel menu iniziale: nelle toolbar resta il titolo scritto. La destinazione resta la stessa.</p>
           <div className="divide-y divide-black/10 border-y border-black/10">
-            {draft.menu_items.map((item, index) => {
+            {menuItems.map((item, index) => {
               const expanded = expandedMenu === item.id;
               return <div key={item.id}>
                 <button type="button" className="flex min-h-16 w-full items-center gap-3 py-4 text-left" aria-expanded={expanded} aria-controls={`site-menu-editor-${item.id}`} onClick={() => setExpandedMenu(expanded ? null : item.id)}>
@@ -203,8 +204,8 @@ export default function AdminSiteSettings({ section }: AdminSiteSettingsProps) {
                 </button>
                 {expanded && <div id={`site-menu-editor-${item.id}`} className="space-y-4 border-t border-black/5 pb-5 pt-3">
                   <label className="block text-[12px] text-black/60">Posizione nel menu
-                    <select className={inputClass} aria-label={`Posizione menu ${item.id}`} value={index} onChange={(event) => update({ menu_items: moveMenuItem(draft.menu_items, item.id, Number(event.target.value)) })}>
-                      {draft.menu_items.map((entry, position) => <option key={entry.id} value={position}>{position + 1}{position === 0 ? " · in cima" : position === draft.menu_items.length - 1 ? " · in fondo" : ""}</option>)}
+                    <select className={inputClass} aria-label={`Posizione menu ${item.id}`} value={index} onChange={(event) => update({ menu_items: moveActiveMenuItem(draft.menu_items, item.id, Number(event.target.value)) })}>
+                      {menuItems.map((entry, position) => <option key={entry.id} value={position}>{position + 1}{position === 0 ? " · in cima" : position === menuItems.length - 1 ? " · in fondo" : ""}</option>)}
                     </select>
                   </label>
                   <label className="block text-[12px] text-black/60">Titolo · {item.id === "navigate" ? "Mondo 3D" : item.id}

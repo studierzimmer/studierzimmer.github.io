@@ -36,7 +36,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
     { id: "sketches", label: "SKETCHES", image_url: null, visible: true },
     { id: "artworks", label: "ARTWORKS", image_url: null, visible: true },
     { id: "horlogerie", label: "HORLOGERIE", image_url: null, visible: true },
-    { id: "jewelry", label: "JEWELRY", image_url: null, visible: true },
+    { id: "jewelry", label: "Fashion and Jewelry", image_url: null, visible: true },
     { id: "fashion", label: "FASHION", image_url: null, visible: true },
     { id: "featured", label: "FEATURED IN", image_url: null, visible: true },
     {

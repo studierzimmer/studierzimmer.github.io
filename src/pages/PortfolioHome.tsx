@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LoadingLogo from "@/components/LoadingLogo";
 import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditControl";
@@ -7,17 +7,19 @@ import type { MenuKey } from "@/types/siteContent";
 import { BOOK_INTRO_RETURN_KEY } from "@/components/books/bookSession";
 import { uploadSiteAsset } from "@/services/siteContentRepository";
 import originalLogo from "@/Portrait/WolfyLight.gif";
-import { moveMenuItem } from "@/lib/siteMenu";
+import { activeMenuItems, moveActiveMenuItem } from "@/lib/siteMenu";
 import "@/styles/portfolio.css";
 
 const destinations: Record<MenuKey, string> = {
   bio: "/bio", sketches: "/sketches", artworks: "/artworks", horlogerie: "/horlogerie",
-  jewelry: "/jewelry", fashion: "/fashion", models: "/models", featured: "/featured-in", navigate: "/navigate",
+  jewelry: "/fashionandjewelry", fashion: "/fashion", models: "/models", featured: "/featured-in", navigate: "/navigate",
 };
 
 export default function PortfolioHome() {
   const { loading } = useSiteContent();
   const { editing, settings: saved, draft, update } = useInlineSiteEditing();
+  const currentEdit = useRef({ editing, draft, update });
+  currentEdit.current = { editing, draft, update };
   const settings = editing ? draft : saved;
   const navigate = useNavigate();
   const [splash, setSplash] = useState(() => sessionStorage.getItem("studierzimmer:splash-seen") !== "true");
@@ -28,7 +30,8 @@ export default function PortfolioHome() {
     setSplash(false);
   }, []);
 
-  const items = settings.menu_items.filter((item) => item.visible);
+  const menuItems = activeMenuItems(settings.menu_items);
+  const items = menuItems.filter((item) => item.visible);
   const openSection = (key: MenuKey) => {
     if (editing) return;
     setSelectedMenu(key);
@@ -52,13 +55,21 @@ export default function PortfolioHome() {
             {editing ? <input className={`inline-menu-title ${item.id === "navigate" ? "is-ocean-title" : ""}`} aria-label={`Titolo ${item.id}`} value={item.label} onChange={(event) => update({ menu_items: draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, label: event.target.value } : entry) })} /> : <button type="button" className={`portfolio-menu-item ${item.id === "navigate" ? "is-ocean-title" : ""}`} onClick={() => openSection(item.id)}>
               {item.image_url ? <img src={item.image_url} alt={item.label} className="portfolio-title-image" /> : item.id === "navigate" ? <em>{item.label}</em> : <span>{item.label}</span>}
             </button>}
-            {editing && <label className="inline-title-upload">{item.image_url ? "sostituisci PNG" : "titolo PNG"}<input aria-label={`Immagine titolo ${item.id}`} type="file" accept="image/png,image/webp,image/jpeg" onChange={async (event) => {
+            {editing && <label className="inline-title-upload">{item.image_url ? "sostituisci PNG · solo menu" : "titolo PNG · solo menu"}<input aria-label={`Immagine titolo ${item.id}`} type="file" accept="image/png,image/webp,image/jpeg" onChange={async (event) => {
               const file = event.target.files?.[0]; if (!file) return;
-              try { const url = await uploadSiteAsset(file); update({ menu_items: draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, image_url: url } : entry) }); setUploadError(null); }
+              try {
+                const url = await uploadSiteAsset(file);
+                const latest = currentEdit.current;
+                // Uploading the menu drawing must not overwrite text/order
+                // edits made while waiting, or revive a cancelled edit.
+                if (!latest.editing) return;
+                latest.update({ menu_items: latest.draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, image_url: url } : entry) });
+                setUploadError(null);
+              }
               catch(error) { setUploadError(error instanceof Error ? error.message : "Upload non riuscito"); }
             }} /></label>}
             {editing && item.image_url && <button className="inline-title-upload" onClick={() => update({ menu_items: draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, image_url: null } : entry) })}>usa testo</button>}
-            {editing && <div className="inline-menu-order" aria-label={`Ordine ${item.label}`}><button type="button" aria-label={`Sposta ${item.label} prima`} disabled={draft.menu_items[0]?.id === item.id} onClick={() => update({ menu_items: moveMenuItem(draft.menu_items, item.id, draft.menu_items.findIndex((entry) => entry.id === item.id) - 1) })}>↑</button><button type="button" aria-label={`Sposta ${item.label} dopo`} disabled={draft.menu_items[draft.menu_items.length - 1]?.id === item.id} onClick={() => update({ menu_items: moveMenuItem(draft.menu_items, item.id, draft.menu_items.findIndex((entry) => entry.id === item.id) + 1) })}>↓</button></div>}
+            {editing && <div className="inline-menu-order" aria-label={`Ordine ${item.label}`}><button type="button" aria-label={`Sposta ${item.label} prima`} disabled={menuItems[0]?.id === item.id} onClick={() => update({ menu_items: moveActiveMenuItem(draft.menu_items, item.id, menuItems.findIndex((entry) => entry.id === item.id) - 1) })}>↑</button><button type="button" aria-label={`Sposta ${item.label} dopo`} disabled={menuItems[menuItems.length - 1]?.id === item.id} onClick={() => update({ menu_items: moveActiveMenuItem(draft.menu_items, item.id, menuItems.findIndex((entry) => entry.id === item.id) + 1) })}>↓</button></div>}
           </div>
         ))}
       </nav>

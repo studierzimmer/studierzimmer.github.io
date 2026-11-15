@@ -416,7 +416,8 @@ function imageFieldsFixture(initial = { media_url: "", additional_images: [] }) 
   assert.equal(calls.saves[0].is_jewelry, true, "admin image edits preserve the saved Jewelry flag");
   for (const key of ["title", "description", "year", "kind", "poster_url", "model_id", "is_fashion", "is_published", "sort_order"]) assert.equal(calls.saves[0][key], image[key], `admin image staging preserves ${key}`);
   tree = render();
-  const jewelryLabel = nodes(tree, (node) => node.type === "label" && nodeText(node) === "Jewelry")[0];
+  assert.equal(nodes(tree, (node) => node.type === "label" && nodeText(node) === "Fashion").length, 0, "the retired standalone Fashion control is absent without deleting legacy item data");
+  const jewelryLabel = nodes(tree, (node) => node.type === "label" && nodeText(node) === "Fashion and Jewelry")[0];
   const jewelryInput = nodes(jewelryLabel, (node) => node.type === "input" && node.props.type === "checkbox")[0];
   assert.equal(jewelryInput.props.checked, true);
   jewelryInput.props.onChange({ target: { checked: false } });
@@ -537,18 +538,20 @@ function keyEvent(key) {
 }
 
 function galleryFixture({ editing = false } = {}) {
-  const harness = hookHarness(), navigations = [];
+  const harness = hookHarness(), navigations = [], scrollReads = [], layoutEffects = [];
   const items = [
     { ...image, id: "jewelry-image", is_jewelry: true },
     { ...image, id: "jewelry-video", kind: "video", is_jewelry: true },
     { ...image, id: "jewelry-model", kind: "model", is_jewelry: true, model_id: "jewelry-model-original-id" },
     { ...image, id: "fashion-only", is_fashion: true, is_jewelry: false },
     { ...image, id: "legacy-uncategorized", is_fashion: false },
+    { ...image, id: "featured-only", is_featured_in: true, is_jewelry: false },
+    { ...image, id: "jewelry-featured", is_jewelry: true, is_featured_in: true },
   ];
-  const settings = { menu_items: [{ id: "artworks", label: "ARTWORKS" }, { id: "jewelry", label: "JEWELRY" }, { id: "fashion", label: "FASHION" }] };
+  const settings = { menu_items: [{ id: "artworks", label: "ARTWORKS" }, { id: "jewelry", label: "Fashion and Jewelry" }, { id: "fashion", label: "FASHION" }] };
   const inline = { editing, draft: settings };
   const api = compile("../src/pages/Artworks.tsx", (id) => {
-    if (id === "react") return { ...harness.react, useEffect() {}, useLayoutEffect() {} };
+    if (id === "react") return { ...harness.react, useEffect() {}, useLayoutEffect(callback) { layoutEffects.push(callback); } };
     if (id === "react/jsx-runtime") return jsx;
     if (id === "framer-motion") return { LayoutGroup: "LayoutGroup", motion: new Proxy({}, { get: (_, name) => `motion.${String(name)}` }), useReducedMotion: () => false };
     if (id === "react-router-dom") return { useNavigate: () => (url, options) => navigations.push({ url, options }) };
@@ -559,8 +562,8 @@ function galleryFixture({ editing = false } = {}) {
     if (id.startsWith("@/components/")) return { default: id };
     if (id.endsWith(".css")) return {};
     throw new Error(`Unexpected gallery dependency: ${id}`);
-  }, { document: { hidden: false } }, (source) => source, "exports.test = { GalleryView };");
-  return { api, items, navigations, render: (props) => harness.render(() => api.test.GalleryView(props)) };
+  }, { document: { hidden: false }, sessionStorage: { getItem: (key) => { scrollReads.push(key); return "96"; } } }, (source) => source, "exports.test = { GalleryView };");
+  return { api, items, navigations, scrollReads, runLayoutEffect: (index) => layoutEffects[index](), render: (props) => { layoutEffects.length = 0; return harness.render(() => api.test.GalleryView(props)); } };
 }
 {
   const fixture = galleryFixture();
@@ -569,11 +572,27 @@ function galleryFixture({ editing = false } = {}) {
   assert.notEqual(jewelry.key, fixture.api.default({}).key, "entering Jewelry remounts its gallery lifecycle and selected-media state");
   const tree = fixture.render({ jewelryOnly: true });
   const cards = nodes(tree, (node) => node.props?.item);
-  assert.deepEqual(cards.map((node) => node.props.item.id), ["jewelry-image", "jewelry-video", "jewelry-model"], "Jewelry selects only explicitly flagged artwork records across all supported media");
-  assert.equal(nodes(tree, (node) => node.props?.section === "jewelry")[0].props.title, "JEWELRY");
+  assert.deepEqual(cards.map((node) => node.props.item.id), ["jewelry-image", "jewelry-video", "jewelry-model", "jewelry-featured"], "Jewelry selects only explicitly flagged artwork records across all supported media");
+  assert.equal(nodes(tree, (node) => node.props?.section === "jewelry")[0].props.title, "Fashion and Jewelry", "the owner-renamed section label remains typed text");
   cards.find((node) => node.props.item.kind === "model").props.onModelReady();
   assert.equal(fixture.navigations[0].url, "/3d?model=jewelry-model-original-id");
-  assert.equal(fixture.navigations[0].options.state.returnTo, "/jewelry", "the existing single-model viewer is given its Jewelry return destination");
+  assert.equal(fixture.navigations[0].options.state.returnTo, "/fashionandjewelry", "the existing single-model viewer is given the canonical Fashion and Jewelry return destination");
+  const scroll = { scrollTop: 0 };
+  nodes(tree, (node) => node.props?.className?.startsWith("artworks-scroll"))[0].props.ref(scroll);
+  fixture.render({ jewelryOnly: true });
+  fixture.runLayoutEffect(0);
+  assert.deepEqual(fixture.scrollReads, ["studierzimmer:artwork-scroll:/jewelry"], "changing the public URL retains the owner's existing Jewelry scroll memory");
+  assert.equal(scroll.scrollTop, 96);
+}
+{
+  const fixture = galleryFixture();
+  const before = JSON.stringify(fixture.items);
+  const artworkCards = nodes(fixture.render({}), (node) => node.props?.item);
+  assert.deepEqual(artworkCards.map((node) => node.props.item.id), ["fashion-only", "legacy-uncategorized"], "base Artworks excludes every Jewelry-flagged item and retains old Fashion/non-Jewelry works");
+  assert.ok(artworkCards.every((node) => !node.props.item.is_jewelry && !node.props.item.is_featured_in));
+  assert.equal(JSON.stringify(fixture.items), before, "gallery exclusivity is a presentation filter, never a data or legacy-flag migration");
+  const featured = galleryFixture();
+  assert.deepEqual(nodes(featured.render({ featuredOnly: true }), (node) => node.props?.item).map((node) => node.props.item.id), ["featured-only", "jewelry-featured"], "Featured In selection remains governed by its existing flag");
 }
 {
   const fixture = galleryFixture({ editing: true });
@@ -598,25 +617,35 @@ function galleryFixture({ editing = false } = {}) {
     ts.forEachChild(node, visit);
   };
   visit(ast);
-  const jewelry = routes.get("/jewelry");
+  const jewelry = routes.get("/fashionandjewelry");
   assert.equal(jewelry.tagName.getText(ast), "Artworks");
   assert.ok(jewelry.attributes.properties.some((attribute) => attribute.name?.getText(ast) === "jewelryOnly"), "the Jewelry route opts into the artwork gallery contract");
+  for (const alias of ["/fashion", "/jewelry"]) {
+    const retired = routes.get(alias);
+    assert.equal(retired.tagName.getText(ast), "Navigate", `${alias} redirects instead of exposing a duplicate standalone gallery`);
+    assert.equal(retired.attributes.properties.find((attribute) => attribute.name?.getText(ast) === "to")?.initializer?.text, "/fashionandjewelry");
+    assert.ok(retired.attributes.properties.some((attribute) => attribute.name?.getText(ast) === "replace"), "legacy redirects do not trap the browser Back button");
+  }
   const horlogerie = routes.get("/horlogerie");
   assert.equal(horlogerie.tagName.getText(ast), "WatchRoute");
   assert.equal(horlogerie.attributes.properties.find((attribute) => attribute.name?.getText(ast) === "category")?.initializer?.text, "horlogerie", "Horlogerie retains the existing categorized 3D library");
   const navigations = [];
+  let requestedReturn = "/fashionandjewelry";
   const app = compile("../src/App.tsx", (id) => {
     if (id === "react") return hookHarness().react;
     if (id === "react/jsx-runtime") return jsx;
     if (id === "@tanstack/react-query") return { QueryClient: class {} };
-    if (id === "react-router-dom") return { useNavigate: () => (url) => navigations.push(url), useLocation: () => ({ search: "?model=jewelry-model-original-id", state: { returnTo: "/jewelry" } }) };
+    if (id === "react-router-dom") return { useNavigate: () => (url) => navigations.push(url), useLocation: () => ({ search: "?model=jewelry-model-original-id", state: { returnTo: requestedReturn } }) };
     // Every remaining import is an inert component/provider, never a real service.
     return {};
   }, { URLSearchParams }, (source) => source, "exports.test = { WatchRoute };");
-  const studio = app.test.WatchRoute({});
-  assert.equal(studio.props.initialModelId, "jewelry-model-original-id");
-  studio.props.onBack();
-  assert.equal(navigations[0], "/jewelry", "the existing 3D viewer's Back action honors the Jewelry gallery destination");
+  for (const destination of ["/fashionandjewelry", "/jewelry", "/fashion"]) {
+    requestedReturn = destination;
+    const studio = app.test.WatchRoute({});
+    assert.equal(studio.props.initialModelId, "jewelry-model-original-id");
+    studio.props.onBack();
+    assert.equal(navigations.at(-1), destination, "the existing 3D viewer honors canonical and previously saved legacy return routes");
+  }
 }
 
 console.log("PASS: original artwork stacks, persistence/schema fallback, upload lifecycle and no-fade carousel interaction; Jewelry normalization/flag safety, admin control, gallery selection/drafts and 3D route return (all storage/network mocked).");

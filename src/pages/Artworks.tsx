@@ -159,8 +159,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
       {draft.kind === "image" && <ArtworkImageFields value={draft} disabled={saving} onBusyChange={setSaving} onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} />}
       {draft.kind === "video" && <label className="artwork-inline-upload">{draft.media_url ? "Sostituisci video" : "Carica video"}<input type="file" accept="video/mp4,video/webm,video/quicktime" disabled={saving} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setSaving(true); try { const url = await uploadArtworkAsset(file); setDraft((current) => ({ ...current, media_url: url })); } catch (error) { setFeedback(error instanceof Error ? error.message : "Upload non riuscito"); } finally { setSaving(false); } }} /></label>}
       <label><input type="checkbox" checked={draft.is_published} onChange={(event) => setDraft({ ...draft, is_published: event.target.checked })} /> Pubblicato</label>
-      <label><input type="checkbox" checked={draft.is_fashion} onChange={(event) => setDraft({ ...draft, is_fashion: event.target.checked })} /> Fashion</label>
-      <label><input type="checkbox" checked={Boolean(draft.is_jewelry)} onChange={(event) => setDraft({ ...draft, is_jewelry: event.target.checked })} /> Jewelry</label>
+      <label><input type="checkbox" checked={Boolean(draft.is_jewelry)} onChange={(event) => setDraft({ ...draft, is_jewelry: event.target.checked })} /> Fashion and Jewelry</label>
       <label><input type="checkbox" checked={Boolean(draft.is_featured_in)} onChange={(event) => setDraft({ ...draft, is_featured_in: event.target.checked })} /> Featured In</label>
       <div className="artwork-inline-actions"><button disabled={saving} onClick={() => void commit()}>salva opera</button><button disabled={saving} onClick={() => { setDraft(item); setFeedback(""); if (!item.media_url && !item.model_id) onRemoveDraft(); }}>annulla</button></div>
       <small role="status">{saving ? "Salvataggio…" : feedback}</small>
@@ -197,10 +196,10 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
   const closeTimer = useRef<number | null>(null);
   const openingTimer = useRef<number | null>(null);
   const section = featuredOnly ? "featured" : jewelryOnly ? "jewelry" : fashionOnly ? "fashion" : "artworks";
-  const returnPath = featuredOnly ? "/featured-in" : jewelryOnly ? "/jewelry" : fashionOnly ? "/fashion" : "/artworks";
-  const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : jewelryOnly ? "JEWELRY" : fashionOnly ? "FASHION" : "ARTWORKS");
-  const scrollKey = `studierzimmer:artwork-scroll:${returnPath}`;
-  const visibleItems = useMemo(() => [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in), [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
+  const returnPath = featuredOnly ? "/featured-in" : jewelryOnly ? "/fashionandjewelry" : fashionOnly ? "/fashion" : "/artworks";
+  const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : jewelryOnly ? "Fashion and Jewelry" : fashionOnly ? "FASHION" : "ARTWORKS");
+  const scrollKey = `studierzimmer:artwork-scroll:${jewelryOnly ? "/jewelry" : returnPath}`;
+  const visibleItems = useMemo(() => [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in && !item.is_jewelry), [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
   const modelIds = useMemo(() => [...new Set(visibleItems.flatMap((item) => item.kind === "model" && item.model_id ? [item.model_id] : []))], [visibleItems]);
   useEffect(() => {
     if (!modelIds.length) { setModels([]); return; }
@@ -257,7 +256,7 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
       <div ref={setScrollRoot} className={`artworks-scroll${selectedId ? " is-detail-open" : ""}`}>
         {loading && <p key={`${section}:loading`} className="artworks-empty artwork-status-blossom" data-blossom role="status">...</p>}
         {error && <div key={`${section}:error`} className="artworks-empty artwork-status-blossom" data-blossom role="alert"><p>{error}</p><button type="button" onClick={() => void reload()}>Riprova</button></div>}
-        {!loading && !error && visibleItems.length === 0 && <p key={`${section}:empty`} className="artworks-empty artwork-status-blossom" data-blossom>{featuredOnly ? "Articoli e apparizioni, prossimamente." : jewelryOnly ? "Nessun contenuto Jewelry pubblicato." : fashionOnly ? "Nessun lavoro Fashion pubblicato." : "Nessun artwork pubblicato."}</p>}
+        {!loading && !error && visibleItems.length === 0 && <p key={`${section}:empty`} className="artworks-empty artwork-status-blossom" data-blossom>{featuredOnly ? "Articoli e apparizioni, prossimamente." : jewelryOnly ? `Nessun contenuto ${sectionTitle} pubblicato.` : fashionOnly ? "Nessun lavoro Fashion pubblicato." : "Nessun artwork pubblicato."}</p>}
         {centered && <div className="artwork-detail-background" onClick={close} aria-hidden="true" />}
         <main className="artworks-grid" aria-label={sectionTitle}>
           {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}

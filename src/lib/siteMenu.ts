@@ -25,3 +25,15 @@ export function moveMenuItem(items: readonly MenuItem[], id: MenuKey, position: 
   next.splice(to, 0, item);
   return next;
 }
+
+/** Retire the standalone Fashion UI without deleting its saved configuration. */
+export function activeMenuItems(items: readonly MenuItem[]): MenuItem[] {
+  return items.filter((item) => item.id !== "fashion");
+}
+
+export function moveActiveMenuItem(items: readonly MenuItem[], id: MenuKey, position: number): MenuItem[] {
+  const reordered = moveMenuItem(activeMenuItems(items), id, position);
+  let index = 0;
+  // Keep retired entries, including their label/image/visibility, intact.
+  return items.map((item) => item.id === "fashion" ? item : reordered[index++]);
+}

@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   BrowserRouter,
+  Navigate,
   Route,
   Routes,
   useLocation,
@@ -89,7 +90,7 @@ const WatchRoute = ({ category }: { category?: ModelCategory }) => {
   const location = useLocation();
   const initialModelId = new URLSearchParams(location.search).get("model") ?? undefined;
   const requestedReturn = (location.state as { returnTo?: string } | null)?.returnTo;
-  const returnTo = requestedReturn === "/artworks" || requestedReturn === "/fashion" || requestedReturn === "/featured-in" || requestedReturn === "/jewelry" ? requestedReturn : "/";
+  const returnTo = requestedReturn === "/artworks" || requestedReturn === "/fashion" || requestedReturn === "/featured-in" || requestedReturn === "/jewelry" || requestedReturn === "/fashionandjewelry" ? requestedReturn : "/";
 
   return (
     <WatchStudio
@@ -143,7 +144,7 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
           <Route path="/" element={<PortfolioHome />} />
           <Route path="/bio" element={<Bio />} />
           <Route path="/artworks" element={<Artworks />} />
-          <Route path="/fashion" element={<Artworks fashionOnly />} />
+          <Route path="/fashion" element={<Navigate to="/fashionandjewelry" replace />} />
           <Route path="/featured-in" element={<Artworks featuredOnly />} />
           <Route path="/navigate" element={<Index />} />
           <Route path="/archive" element={<Menu />} />
@@ -154,7 +155,8 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="/3d" element={<WatchRoute />} />
           <Route path="/horlogerie" element={<WatchRoute category="horlogerie" />} />
-          <Route path="/jewelry" element={<Artworks jewelryOnly />} />
+          <Route path="/fashionandjewelry" element={<Artworks jewelryOnly />} />
+          <Route path="/jewelry" element={<Navigate to="/fashionandjewelry" replace />} />
           <Route path="/models" element={<WatchRoute category="models" />} />
 
           <Route path="/sketches" element={<PublicBooksRoute />} />
