@@ -316,7 +316,33 @@ export async function saveSiteSettings(settings: SiteSettings): Promise<void> {
 }
 
 async function resolveArtwork(item: ArtworkItem): Promise<ArtworkItem> {
-  return { ...item, is_featured_in: Boolean(item.is_featured_in), external_url: articleUrl(item.external_url), media_url: (await resolvedUrl(item.media_url)) ?? "", poster_url: await resolvedUrl(item.poster_url) };
+  const [mediaUrl, posterUrl, additionalImages] = await Promise.all([
+    resolvedUrl(item.media_url),
+    resolvedUrl(item.poster_url),
+    Promise.all(normalizeAdditionalImages(item.additional_images, item.media_url).map((url) => resolvedUrl(url))),
+  ]);
+  return {
+    ...item,
+    is_featured_in: Boolean(item.is_featured_in),
+    is_jewelry: Boolean(item.is_jewelry),
+    external_url: articleUrl(item.external_url),
+    media_url: mediaUrl ?? "",
+    poster_url: posterUrl,
+    additional_images: normalizeAdditionalImages(additionalImages, mediaUrl),
+  };
+}
+
+function normalizeAdditionalImages(value: unknown, primary: string | null): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(nullableUrl).filter((url): url is string => url !== null && url !== primary))];
+}
+
+function missingArtworkColumn(error: unknown, column: "additional_images" | "is_jewelry"): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String(error.code) : "";
+  const message = errorMessage(error);
+  return (code === "PGRST204" || code === "42703")
+    && new RegExp(`\\b${column}\\b`, "i").test(message);
 }
 
 function articleUrl(value: unknown): string | null {
@@ -366,9 +392,11 @@ export async function saveArtworkItem(item: ArtworkItem): Promise<ArtworkItem> {
     year: Math.round(finiteNumber(item.year, new Date().getFullYear(), 0, 9999)),
     kind: ["image", "video", "model"].includes(item.kind) ? item.kind : "image",
     media_url: nullableUrl(item.media_url) ?? "",
+    additional_images: normalizeAdditionalImages(item.additional_images, nullableUrl(item.media_url)),
     poster_url: nullableUrl(item.poster_url),
     model_id: item.model_id || null,
     is_fashion: Boolean(item.is_fashion),
+    is_jewelry: Boolean(item.is_jewelry),
     is_published: Boolean(item.is_published),
     sort_order: Math.round(finiteNumber(item.sort_order, 0, -100000, 100000)),
     description: item.description ?? "",
@@ -379,12 +407,38 @@ export async function saveArtworkItem(item: ArtworkItem): Promise<ArtworkItem> {
     const local = await readLocal<ArtworkItem[]>("drafts", ARTWORKS_KEY);
     // Seed the first draft with the full catalogue, including unpublished admin work.
     const items = local ?? (await listArtworkItems(true));
-    const stored = { ...clean, media_url: persistentUrl(clean.media_url) ?? "", poster_url: persistentUrl(clean.poster_url) };
+    const primary = persistentUrl(clean.media_url) ?? "";
+    const stored = {
+      ...clean,
+      media_url: primary,
+      poster_url: persistentUrl(clean.poster_url),
+      additional_images: normalizeAdditionalImages(clean.additional_images?.map((url) => persistentUrl(url)), primary),
+    };
     await writeLocal("drafts", ARTWORKS_KEY, [...items.filter((existing) => existing.id !== clean.id), stored]);
     status.artworks = { source: "local", error: null };
   } else {
     await requireAdmin();
-    const { error } = await supabase.from("artworks").upsert(clean);
+    const payload = { ...clean };
+    let { error } = await supabase.from("artworks").upsert(payload);
+    // A real []/false must clear existing values on upgraded schemas. Only a
+    // missing optional column may retry without an empty field, in either
+    // schema-error order. Never silently drop images or a true Jewelry flag.
+    for (let retry = 0; error && retry < 2; retry += 1) {
+      if (missingArtworkColumn(error, "additional_images") && Object.prototype.hasOwnProperty.call(payload, "additional_images")) {
+        if (clean.additional_images?.length) {
+          throw new Error("Applica prima la migrazione 20261115020000_artwork_images.sql (o lo script completo aggiornato) nell'editor SQL di Supabase per salvare più immagini nella stessa opera.");
+        }
+        delete payload.additional_images;
+      } else if (missingArtworkColumn(error, "is_jewelry") && Object.prototype.hasOwnProperty.call(payload, "is_jewelry")) {
+        if (clean.is_jewelry) {
+          throw new Error("Applica prima la migrazione 20261115020000_artwork_images.sql (o lo script completo aggiornato) nell'editor SQL di Supabase per pubblicare l'opera in Jewelry.");
+        }
+        delete payload.is_jewelry;
+      } else {
+        break;
+      }
+      ({ error } = await supabase.from("artworks").upsert(payload));
+    }
     if (error) {
       const message = errorMessage(error);
       if (/is_featured_in|external_url/.test(message)) throw new Error("Applica prima lo script 20261114000000_featured_in_and_ocean.sql nell'editor SQL di Supabase.");

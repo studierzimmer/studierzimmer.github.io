@@ -33,6 +33,6 @@
 .admin-artwork-flags { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 25px; }
 .admin-artwork-flags label { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; cursor: pointer; }
 .admin-artwork-flags input { accent-color: #111; }
-.admin-artwork-actions { display: flex; align-items: center; gap: 24px; margin-top: 24px; }
+.admin-artwork-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-top: 24px; }
 .admin-artwork-actions .admin-artwork-save { border-bottom: 1px solid #171717; padding: 8px 0; }
 @media (max-width: 600px) { .admin-artworks-heading { flex-direction: column; gap: 8px; } .admin-artwork-fields { grid-template-columns: 1fr; gap: 18px; } .admin-artwork-wide { grid-column: auto; } }

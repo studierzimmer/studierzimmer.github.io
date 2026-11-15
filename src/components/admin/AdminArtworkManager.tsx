@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import ArtworkImageFields from "@/components/artworks/ArtworkImageFields";
 import { useArtworks } from "@/hooks/useSiteContent";
 import { deleteArtworkItem, saveArtworkItem, uploadArtworkAsset } from "@/services/siteContentRepository";
 import { listAllThreeDModelsForAdmin } from "@/services/threeDModelRepository";
@@ -9,8 +10,8 @@ import "./AdminArtworkManager.css";
 function emptyArtwork(order: number): ArtworkItem {
   return {
     id: "", title: "", year: new Date().getFullYear(), kind: "image", media_url: "",
-    poster_url: null, model_id: null, is_fashion: false, is_published: false,
-    sort_order: order, description: "", is_featured_in: false, external_url: null,
+    poster_url: null, model_id: null, is_fashion: false, is_jewelry: false, is_published: false,
+    sort_order: order, description: "", is_featured_in: false, external_url: null, additional_images: [],
   };
 }
 
@@ -26,10 +27,17 @@ export default function AdminArtworkManager({ onArtworksChanged }: { onArtworksC
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [posterFile, setPosterFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [imagesBusy, setImagesBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [formVersion, setFormVersion] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const imagesBusyRef = useRef(false);
+  const handleImagesBusy = useCallback((value: boolean) => {
+    imagesBusyRef.current = value;
+    setImagesBusy(value);
+  }, []);
+  const locked = busy || imagesBusy;
 
   useEffect(() => {
     let active = true;
@@ -41,16 +49,20 @@ export default function AdminArtworkManager({ onArtworksChanged }: { onArtworksC
 
   const resetFiles = () => { setMediaFile(null); setPosterFile(null); setFormVersion((version) => version + 1); };
   const edit = (item: ArtworkItem) => {
+    if (busy || imagesBusyRef.current) return;
     setDraft({ ...item }); resetFiles(); setNotice(null); setError(null);
   };
   const create = () => {
+    if (busy || imagesBusyRef.current) return;
     setDraft(emptyArtwork(items.length ? Math.max(...items.map((item) => item.sort_order)) + 10 : 0));
     resetFiles(); setNotice(null); setError(null);
     window.requestAnimationFrame(() => formRef.current?.querySelector<HTMLInputElement>('input[name="artwork-title"]')?.focus());
   };
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError(null); setNotice(null);
+    event.preventDefault();
+    if (busy || imagesBusyRef.current) return;
+    setError(null); setNotice(null);
     if (!draft.title.trim()) { setError("Enter a title."); return; }
     if (!Number.isInteger(draft.year) || draft.year < 1 || draft.year > 9999) { setError("Enter a valid year."); return; }
     if (draft.kind === "model" && !draft.model_id) { setError("Select a model from the 3D library."); return; }
@@ -80,7 +92,8 @@ export default function AdminArtworkManager({ onArtworksChanged }: { onArtworksC
   };
 
   const remove = async (item: ArtworkItem) => {
-    if (!window.confirm(`Delete “${item.title}” from Artworks and Fashion?`)) return;
+    if (busy || imagesBusyRef.current) return;
+    if (!window.confirm(`Delete “${item.title}” from Artworks, Jewelry, Fashion and Featured In?`)) return;
     setBusy(true); setError(null); setNotice(null);
     try {
       await deleteArtworkItem(item.id);
@@ -91,6 +104,7 @@ export default function AdminArtworkManager({ onArtworksChanged }: { onArtworksC
   };
 
   const move = async (index: number, offset: number) => {
+    if (busy || imagesBusyRef.current) return;
     const target = index + offset;
     if (target < 0 || target >= items.length) return;
     const reordered = [...items];
@@ -113,35 +127,35 @@ export default function AdminArtworkManager({ onArtworksChanged }: { onArtworksC
 
   return (
     <section className="admin-artworks" aria-label="Artworks manager">
-      <header className="admin-artworks-heading"><div><h2>ARTWORKS / FASHION / FEATURED IN</h2><p>Immagini, video e modelli. Scegli Fashion per i lavori moda o Featured In per articoli e apparizioni esterne.</p></div><button type="button" onClick={create} disabled={busy}>+ NUOVO CONTENUTO</button></header>
+      <header className="admin-artworks-heading"><div><h2>ARTWORKS / JEWELRY / FASHION / FEATURED IN</h2><p>Immagini, video e modelli. Seleziona Jewelry per i gioielli, Fashion per i lavori moda o Featured In per articoli e apparizioni esterne.</p></div><button type="button" onClick={create} disabled={locked}>+ NUOVO CONTENUTO</button></header>
       {loading && <p className="admin-artworks-message" role="status">Loading artworks...</p>}
       {(loadError || error) && <p className="admin-artworks-message is-error" role="alert">{error || loadError}</p>}
       {notice && <p className="admin-artworks-message" role="status">{notice}</p>}
       <div className="admin-artworks-list" aria-label="Artwork list">
         {items.map((item, index) => <article key={item.id} className={`admin-artwork-list-item${item.id === draft.id ? " is-selected" : ""}`}>
-          <button type="button" className="admin-artwork-select" onClick={() => edit(item)} disabled={busy} aria-pressed={item.id === draft.id}>
+          <button type="button" className="admin-artwork-select" onClick={() => edit(item)} disabled={locked} aria-pressed={item.id === draft.id}>
             {(item.kind === "image" ? item.media_url : item.poster_url) ? <img src={(item.kind === "image" ? item.media_url : item.poster_url)!} alt="" loading="lazy" /> : <span className="admin-artwork-format">{item.kind === "model" ? "3D" : "VIDEO"}</span>}
-            <span>{item.title}</span><small>{item.year} · {item.is_published ? "PUBLISHED" : "DRAFT"}{item.is_fashion ? " · FASHION" : ""}{item.is_featured_in ? " · FEATURED IN" : ""}</small>
+            <span>{item.title}</span><small>{item.year} · {item.is_published ? "PUBLISHED" : "DRAFT"}{item.is_jewelry ? " · JEWELRY" : ""}{item.is_fashion ? " · FASHION" : ""}{item.is_featured_in ? " · FEATURED IN" : ""}</small>
           </button>
-          <div className="admin-artwork-order"><button type="button" aria-label={`Move ${item.title} earlier`} onClick={() => void move(index, -1)} disabled={busy || index === 0}>←</button><button type="button" aria-label={`Move ${item.title} later`} onClick={() => void move(index, 1)} disabled={busy || index === items.length - 1}>→</button><button type="button" onClick={() => void remove(item)} disabled={busy} aria-label={`Delete ${item.title}`}>DELETE</button></div>
+          <div className="admin-artwork-order"><button type="button" aria-label={`Move ${item.title} earlier`} onClick={() => void move(index, -1)} disabled={locked || index === 0}>←</button><button type="button" aria-label={`Move ${item.title} later`} onClick={() => void move(index, 1)} disabled={locked || index === items.length - 1}>→</button><button type="button" onClick={() => void remove(item)} disabled={locked} aria-label={`Delete ${item.title}`}>DELETE</button></div>
         </article>)}
         {!loading && !items.length && <p className="admin-artworks-message">No works yet. Upload your first image, video or select a model below.</p>}
       </div>
       <form ref={formRef} onSubmit={(event) => void save(event)} className="admin-artwork-form">
         <h3>{draft.id ? "EDIT WORK" : "NEW WORK"}</h3>
-        <fieldset disabled={busy}>
+        <fieldset disabled={locked}>
           <div className="admin-artwork-fields">
             <label className="admin-artwork-wide">Title<input name="artwork-title" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} maxLength={240} required /></label>
             <label>Year<input type="number" min={1} max={9999} step={1} value={draft.year} onChange={(event) => setDraft({ ...draft, year: event.target.valueAsNumber })} required /></label>
-            <label>Media type<select value={draft.kind} onChange={(event) => { setDraft({ ...draft, kind: event.target.value as ArtworkItem["kind"], media_url: "", model_id: null }); resetFiles(); }}><option value="image">Image</option><option value="video">Video</option><option value="model">3D model</option></select></label>
-            {draft.kind === "model" ? <label className="admin-artwork-wide">Model from the 3D library<select value={draft.model_id || ""} onChange={(event) => setDraft({ ...draft, model_id: event.target.value || null })} required><option value="">Select a model</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.is_published ? "" : " (draft)"}</option>)}</select>{modelError && <small className="is-error">{modelError}</small>}{selectedModel && !selectedModel.is_published && <small>Publish this model in the 3D library before publishing its artwork.</small>}</label> : <label className="admin-artwork-wide">{draft.kind === "image" ? "Image" : "Video"} upload<input key={`media-${formVersion}`} type="file" accept={draft.kind === "image" ? ".png,.jpg,.jpeg,.webp,.avif,.gif,image/*" : ".mp4,.webm,.mov,video/mp4,video/webm,video/quicktime"} onChange={(event) => setMediaFile(event.target.files?.[0] ?? null)} /><small>{mediaFile ? mediaFile.name : draft.media_url ? "Current media saved. Choose a file to replace it." : "Up to 50 MB."}</small></label>}
+            <label>Media type<select value={draft.kind} onChange={(event) => { setDraft({ ...draft, kind: event.target.value as ArtworkItem["kind"], media_url: "", additional_images: [], model_id: null }); resetFiles(); }}><option value="image">Image</option><option value="video">Video</option><option value="model">3D model</option></select></label>
+            {draft.kind === "image" ? <div className="admin-artwork-wide"><ArtworkImageFields value={draft} onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} disabled={busy} onBusyChange={handleImagesBusy} /></div> : draft.kind === "model" ? <label className="admin-artwork-wide">Model from the 3D library<select value={draft.model_id || ""} onChange={(event) => setDraft({ ...draft, model_id: event.target.value || null })} required><option value="">Select a model</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.is_published ? "" : " (draft)"}</option>)}</select>{modelError && <small className="is-error">{modelError}</small>}{selectedModel && !selectedModel.is_published && <small>Publish this model in the 3D library before publishing its artwork.</small>}</label> : <label className="admin-artwork-wide">Video upload<input key={`media-${formVersion}`} type="file" accept=".mp4,.webm,.mov,video/mp4,video/webm,video/quicktime" onChange={(event) => setMediaFile(event.target.files?.[0] ?? null)} /><small>{mediaFile ? mediaFile.name : draft.media_url ? "Current media saved. Choose a file to replace it." : "Up to 50 MB."}</small></label>}
             {draft.kind !== "image" && <label className="admin-artwork-wide">{draft.kind === "video" ? "Video still preview (required)" : "Poster image (optional)"}<input key={`poster-${formVersion}`} type="file" accept=".png,.jpg,.jpeg,.webp,.avif,.gif,image/*" onChange={(event) => setPosterFile(event.target.files?.[0] ?? null)} /><small>{posterFile ? posterFile.name : draft.poster_url ? "Preview saved." : draft.kind === "model" ? "The catalogue animates the actual model when it is visible." : "The video starts only after opening the work."}</small>{draft.poster_url && <button type="button" onClick={() => { setDraft({ ...draft, poster_url: null }); setPosterFile(null); setFormVersion((value) => value + 1); }}>REMOVE PREVIEW</button>}</label>}
             <label className="admin-artwork-wide">Description<textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={3} /></label>
-            <label className="admin-artwork-wide">Link articolo esterno<input type="url" value={draft.external_url || ""} onChange={(event) => setDraft({ ...draft, external_url: event.target.value })} placeholder="https://…" /><small>Il link si apre in una nuova scheda. Facoltativo per Artworks e Fashion.</small></label>
+            <label className="admin-artwork-wide">Link articolo esterno<input type="url" value={draft.external_url || ""} onChange={(event) => setDraft({ ...draft, external_url: event.target.value })} placeholder="https://…" /><small>Il link si apre in una nuova scheda. Facoltativo per Artworks, Jewelry e Fashion.</small></label>
             <label>Order<input type="number" value={draft.sort_order} onChange={(event) => setDraft({ ...draft, sort_order: event.target.valueAsNumber || 0 })} /></label>
           </div>
-          <div className="admin-artwork-flags"><label><input type="checkbox" checked={draft.is_fashion} onChange={(event) => setDraft({ ...draft, is_fashion: event.target.checked })} />Fashion</label><label><input type="checkbox" checked={Boolean(draft.is_featured_in)} onChange={(event) => setDraft({ ...draft, is_featured_in: event.target.checked })} />Featured In</label><label><input type="checkbox" checked={draft.is_published} onChange={(event) => setDraft({ ...draft, is_published: event.target.checked })} />Published</label></div>
-          <div className="admin-artwork-actions"><button type="submit" className="admin-artwork-save">{busy ? "SAVING..." : "SAVE WORK"}</button>{draft.id && <button type="button" onClick={() => void remove(draft)}>DELETE WORK</button>}</div>
+          <div className="admin-artwork-flags"><label><input type="checkbox" checked={Boolean(draft.is_jewelry)} onChange={(event) => setDraft({ ...draft, is_jewelry: event.target.checked })} />Jewelry</label><label><input type="checkbox" checked={draft.is_fashion} onChange={(event) => setDraft({ ...draft, is_fashion: event.target.checked })} />Fashion</label><label><input type="checkbox" checked={Boolean(draft.is_featured_in)} onChange={(event) => setDraft({ ...draft, is_featured_in: event.target.checked })} />Featured In</label><label><input type="checkbox" checked={draft.is_published} onChange={(event) => setDraft({ ...draft, is_published: event.target.checked })} />Published</label></div>
+          <div className="admin-artwork-actions"><button type="submit" className="admin-artwork-save">{imagesBusy ? "CARICAMENTO IMMAGINI…" : busy ? "SAVING..." : "SAVE WORK"}</button><button type="button" onClick={() => { const original = items.find((item) => item.id === draft.id); setDraft(original ? { ...original } : emptyArtwork(draft.sort_order)); resetFiles(); setNotice(null); setError(null); }}>ANNULLA MODIFICHE</button>{draft.id && <button type="button" onClick={() => void remove(draft)}>DELETE WORK</button>}</div>
         </fieldset>
       </form>
     </section>

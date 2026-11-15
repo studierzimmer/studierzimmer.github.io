@@ -25,6 +25,81 @@ The file is ignored by Git and must never contain a service-role key.
 
 ## Update the resumed Supabase project for the new portfolio
 
+### Recommended: one complete, transactional update
+
+Use **`supabase/sql/update_studierzimmer_complete.sql`** in the original
+project's **SQL Editor > New query**, copying the **entire** file and selecting
+Run. It replaces the need to run the individual portfolio/Featured In/comment
+updates below. Do not paste only one internal section or run the maintenance
+fragments separately. No SQL in this repository is executed automatically.
+
+Before running it:
+
+- Make and verify a database backup **and a separate backup of Storage files**.
+- Compare the dashboard Project URL with `VITE_SUPABASE_URL` in `.env.local`.
+  `supabase/config.toml` may point elsewhere: do not use an unverified `db push`.
+- Use the existing project with its original books/pages/models and
+  `public.is_admin()`. This script is **not** a fresh-server installer and never
+  assigns an administrator, resets a password, or recreates original RPC logic.
+
+The updater installs Artworks/Fashion/Featured In, the full comment schema
+(title, colours, opacity, size, rich text), missing book/model UI columns,
+and character schema when absent. Ocean text/labels/environment and all other
+settings stay in the existing JSON, without resetting saved customizations.
+It adds RLS allow policies **and restrictive guards**, so older permissive
+policies cannot reopen browser writes to non-administrators. This also repairs
+the original character policies that permitted any authenticated user to edit.
+Unrelated buckets/policies and existing content remain intact.
+
+Models and characters stay/become private and use published-only signed asset
+access. **Book pages and site assets remain public:** knowing a file's public
+URL is enough to download it, even when its catalogue entry is unpublished.
+Do not put private files or CAD sources in those public buckets. Hiding a card
+is not file privacy; changing this requires a separate client/storage migration.
+
+All schema/security changes commit together. An incompatible original schema
+or private media bucket aborts rather than silently replacing data or exposing
+files. New checks validate old rows where possible; incompatible old values
+are preserved and reported as `VERIFICARE`, while new writes are checked.
+Read the final report and any SQL warnings. `DA RIVEDERE` on original RPCs is
+intentional: their bodies/owners/grants and the admin predicate are not in this
+repository and cannot be safely reinvented. Unknown restrictive policies may
+still deny requests; they are reported instead of deleted. Analytics/archive
+tables are hardened only if already installed, not initialized by this update.
+
+This is scoped application hardening, **not a guarantee of total Supabase
+security**. Review Security Advisor, administrator MFA, sign-up policy,
+API/Edge Function rate limits, original SECURITY DEFINER functions and secrets.
+Service-role keys bypass RLS and must never be shipped to the browser.
+
+After Run, test public published content and admin upload/save on the site.
+If SQL fails, preserve the full error; do not reset tables. The generated SQL
+does not mark old migrations applied in Supabase's CLI migration history.
+
+Maintainers can regenerate/check the single-file artifact without a connection:
+
+```sh
+node scripts/build-supabase-update.mjs
+node scripts/build-supabase-update.mjs --check
+node scripts/test-supabase-update.mjs --pglite=/absolute/path/to/@electric-sql/pglite/dist/index.js
+```
+
+The SQL execution tests use a separately installed temporary PGlite PostgreSQL
+runtime and synthetic Supabase roles/storage metadata; they never connect to
+the project, fetch credentials or change remote data. They do not replace an
+end-to-end check of Supabase Storage HTTP serving or the original RPC bodies.
+
+### Older individual updates (reference)
+
+The local multi-image/Jewelry update adds `artworks.additional_images` and
+`is_jewelry`. If the complete update was already run before those fields were
+added, apply only `supabase/migrations/20261115020000_artwork_images.sql` after
+approval, or rerun the regenerated complete updater. No script is applied
+automatically. The first `media_url` remains the cover, extra original images
+share the same artwork's title/description/year, and Jewelry uses the artwork
+gallery filtered by its new checkbox. Legacy 3D catalogue entries are not
+deleted or automatically converted into artworks.
+
 This is an additive update to the existing Studier Zimmer project, not a fresh
 installation or a database reset. It keeps books, pages, models, users, and
 existing saved CMS content. No frontend is deployed by this SQL update.
@@ -187,6 +262,7 @@ node scripts/test-ocean-aperture.mjs
 node scripts/test-ocean-environment.mjs
 node scripts/test-ocean-text.mjs
 node scripts/test-gallery-performance.mjs
+node scripts/test-artwork-images.mjs
 node scripts/test-watch-visibility.mjs
 node scripts/test-public-route-lifecycle.mjs
 npm run predeploy

@@ -196,12 +196,14 @@ const jsx = { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({
 const listeners = new Map();
 const document = { hidden: false, addEventListener: (name, callback) => listeners.set(name, callback), removeEventListener: (name) => listeners.delete(name) };
 let frameCallback;
+const artworkImageHelpers = compile("../src/lib/artworkImages.ts", (id) => { throw new Error(`Unexpected image helper dependency: ${id}`); });
 function componentRequire(id) {
   if (id === "react") return react;
   if (id === "react/jsx-runtime") return jsx;
   if (id === "react-router-dom") return {};
   if (id === "framer-motion") return { LayoutGroup: "LayoutGroup", motion: new Proxy({}, { get: (_, name) => `motion.${String(name)}` }), useReducedMotion: () => false };
   if (id === "@/components/SiteEditControl") return { useInlineSiteEditing: () => ({ registerFields: () => () => {} }) };
+  if (id === "@/lib/artworkImages") return artworkImageHelpers;
   if (id === "@react-three/fiber") return { Canvas: "Canvas", useFrame: (callback) => { frameCallback = callback; } };
   if (id === "@react-three/drei") return {};
   if (id === "three" || id === "three-stdlib" || id.endsWith(".css") || id.startsWith("@/")) return {};

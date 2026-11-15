@@ -54,9 +54,12 @@ export interface ArtworkItem {
   year: number;
   kind: "image" | "video" | "model";
   media_url: string;
+  /** Additional image originals, after media_url; absent on legacy artworks. */
+  additional_images?: string[];
   poster_url: string | null;
   model_id: string | null;
   is_fashion: boolean;
+  is_jewelry?: boolean;
   is_published: boolean;
   sort_order: number;
   description: string;

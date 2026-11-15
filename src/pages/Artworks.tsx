@@ -7,6 +7,9 @@ import SectionNavigation from "@/components/navigation/SectionNavigation";
 import { saveArtworkItem, uploadArtworkAsset } from "@/services/siteContentRepository";
 import type { ArtworkItem } from "@/types/siteContent";
 import type { ThreeDModel } from "@/types/threeDModels";
+import { artworkImageSources } from "@/lib/artworkImages";
+import ArtworkImageCarousel from "@/components/artworks/ArtworkImageCarousel";
+import ArtworkImageFields from "@/components/artworks/ArtworkImageFields";
 import "./Artworks.css";
 
 const ModelPreview = lazy(() => import("@/components/artworks/ArtworkModelPreview"));
@@ -62,6 +65,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
   const [draft, setDraft] = useState(item);
   const [feedback, setFeedback] = useState("");
   const [saving, setSaving] = useState(false);
+  const imageSources = useMemo(() => artworkImageSources(draft), [draft]);
   const { registerFields } = useInlineSiteEditing();
   const removeDraftRef = useRef(onRemoveDraft);
   removeDraftRef.current = onRemoveDraft;
@@ -106,6 +110,10 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
     return () => observer.disconnect();
   }, [scrollRoot]);
   const commit = useCallback(async (patch: Partial<ArtworkItem> = {}, propagate = false) => {
+    if (saving) {
+      const error = new Error("Attendi il completamento del caricamento delle immagini.");
+      setFeedback(error.message); if (propagate) throw error; return;
+    }
     const next = { ...draft, ...patch }; setDraft(next);
     if (!next.title.trim() || (!next.media_url && !next.model_id)) {
       const error = new Error("Inserisci titolo e immagine prima di salvare.");
@@ -117,28 +125,30 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
     try { await saveArtworkItem(next); setFeedback("Salvato"); }
     catch (error) { setFeedback(error instanceof Error ? error.message : "Salvataggio non riuscito"); if (propagate) throw error; }
     finally { setSaving(false); }
-  }, [draft]);
+  }, [draft, saving]);
   useEffect(() => {
     if (!editing) return;
     return registerFields(`artwork:${item.id}`, {
       save: () => commit({}, true),
       cancel: () => { setDraft(item); setFeedback(""); if (!item.media_url && !item.model_id) removeDraftRef.current(); },
-      isDirty: () => JSON.stringify(draft) !== JSON.stringify(item),
+      isDirty: () => saving || JSON.stringify(draft) !== JSON.stringify(item),
     });
-  }, [editing, draft, item, registerFields, commit]);
+  }, [editing, draft, item, registerFields, commit, saving]);
   const activate = () => { if (!editing && !(item.kind === "video" && selected)) { if (selected) onClose(); else onSelect(); } };
 
   return <article className={`artwork-card${selected ? " is-selected" : ""}${detailOpen && !selected ? " is-away" : ""}`} ref={ref} data-artwork-id={item.id} data-artwork-kind={draft.kind} data-year={draft.year} style={{ "--artwork-entry-delay": `${Math.min(order, 8) * 65}ms`, "--artwork-copy-width": `${frame.width}px` } as CSSProperties}>
     <div className="artwork-preview-slot" ref={slot}>
       {/* A single persistent media node moves between its two measured layouts.
           No duplicate image, shared-layout crossfade, or opacity animation. */}
-      <motion.div layout className={`artwork-card-preview${selected && centered ? " is-centered" : ""}`} style={mediaFrame} data-blossom="media"
+      <motion.div layout className={`artwork-card-preview${selected && centered ? " is-centered" : ""}${imageSources.length > 1 ? " has-image-stack" : ""}`} style={mediaFrame} data-blossom="media"
         transition={{ layout: reducedMotion ? { duration: 0 } : spring }}
         onLayoutAnimationComplete={() => { if (selected && centered && item.kind === "model") onModelReady(); }}
         role={item.kind === "video" && selected ? undefined : "button"} tabIndex={editing || (detailOpen && !selected) || (item.kind === "video" && selected) ? -1 : 0}
         aria-label={selected ? `Torna alla selezione: ${draft.title}` : `Apri ${draft.title}`} onClick={activate}
         onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } }}>
-        <Preview item={draft} model={model} active={active || selected} animate={!reducedMotion && documentVisible && (active || selected) && (!detailOpen || selected)} documentVisible={documentVisible} priority={priority} detail={selected && centered} onDimensions={onDimensions} />
+        {imageSources.length > 1 ? <ArtworkImageCarousel images={imageSources} title={draft.title} open={selected && centered} active={active || selected} reducedMotion={reducedMotion} width={mediaFrame.width} height={mediaFrame.height} viewportWidth={frame.viewportWidth}>
+          <Preview item={draft} model={model} active={active || selected} animate={false} documentVisible={documentVisible} priority={priority} detail={selected && centered} onDimensions={onDimensions} />
+        </ArtworkImageCarousel> : <Preview item={draft} model={model} active={active || selected} animate={!reducedMotion && documentVisible && (active || selected) && (!detailOpen || selected)} documentVisible={documentVisible} priority={priority} detail={selected && centered} onDimensions={onDimensions} />}
       </motion.div>
     </div>
     {editing ? <div className="artwork-inline-fields" data-inline-editor>
@@ -146,9 +156,11 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
       <textarea aria-label="Descrizione opera" placeholder="Descrizione" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={3} />
       <label>Anno<input type="number" aria-label="Anno opera" value={draft.year} min={1} max={9999} onChange={(event) => setDraft({ ...draft, year: Number(event.target.value) })} /></label>
       <input type="url" aria-label="Link articolo" placeholder="https://… · link articolo" value={draft.external_url || ""} onChange={(event) => setDraft({ ...draft, external_url: event.target.value })} />
-      {draft.kind !== "model" && <label className="artwork-inline-upload">{draft.media_url ? "Sostituisci immagine / video" : "Carica immagine"}<input type="file" accept={draft.kind === "video" ? "video/mp4,video/webm,video/quicktime" : "image/*"} disabled={saving} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setSaving(true); try { const url = await uploadArtworkAsset(file); setDraft((current) => ({ ...current, media_url: url })); } catch (error) { setFeedback(error instanceof Error ? error.message : "Upload non riuscito"); } finally { setSaving(false); } }} /></label>}
+      {draft.kind === "image" && <ArtworkImageFields value={draft} disabled={saving} onBusyChange={setSaving} onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))} />}
+      {draft.kind === "video" && <label className="artwork-inline-upload">{draft.media_url ? "Sostituisci video" : "Carica video"}<input type="file" accept="video/mp4,video/webm,video/quicktime" disabled={saving} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setSaving(true); try { const url = await uploadArtworkAsset(file); setDraft((current) => ({ ...current, media_url: url })); } catch (error) { setFeedback(error instanceof Error ? error.message : "Upload non riuscito"); } finally { setSaving(false); } }} /></label>}
       <label><input type="checkbox" checked={draft.is_published} onChange={(event) => setDraft({ ...draft, is_published: event.target.checked })} /> Pubblicato</label>
       <label><input type="checkbox" checked={draft.is_fashion} onChange={(event) => setDraft({ ...draft, is_fashion: event.target.checked })} /> Fashion</label>
+      <label><input type="checkbox" checked={Boolean(draft.is_jewelry)} onChange={(event) => setDraft({ ...draft, is_jewelry: event.target.checked })} /> Jewelry</label>
       <label><input type="checkbox" checked={Boolean(draft.is_featured_in)} onChange={(event) => setDraft({ ...draft, is_featured_in: event.target.checked })} /> Featured In</label>
       <div className="artwork-inline-actions"><button disabled={saving} onClick={() => void commit()}>salva opera</button><button disabled={saving} onClick={() => { setDraft(item); setFeedback(""); if (!item.media_url && !item.model_id) onRemoveDraft(); }}>annulla</button></div>
       <small role="status">{saving ? "Salvataggio…" : feedback}</small>
@@ -163,7 +175,9 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
   </article>;
 }
 
-function GalleryView({ fashionOnly = false, featuredOnly = false }: { fashionOnly?: boolean; featuredOnly?: boolean }) {
+export const ArtworkCard = Card;
+
+function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = false }: { fashionOnly?: boolean; featuredOnly?: boolean; jewelryOnly?: boolean }) {
   const navigate = useNavigate();
   const inline = useInlineSiteEditing();
   const { settings } = useSiteContent();
@@ -182,11 +196,11 @@ function GalleryView({ fashionOnly = false, featuredOnly = false }: { fashionOnl
   const restored = useRef(false);
   const closeTimer = useRef<number | null>(null);
   const openingTimer = useRef<number | null>(null);
-  const section = featuredOnly ? "featured" : fashionOnly ? "fashion" : "artworks";
-  const returnPath = featuredOnly ? "/featured-in" : fashionOnly ? "/fashion" : "/artworks";
-  const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : fashionOnly ? "FASHION" : "ARTWORKS");
+  const section = featuredOnly ? "featured" : jewelryOnly ? "jewelry" : fashionOnly ? "fashion" : "artworks";
+  const returnPath = featuredOnly ? "/featured-in" : jewelryOnly ? "/jewelry" : fashionOnly ? "/fashion" : "/artworks";
+  const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : jewelryOnly ? "JEWELRY" : fashionOnly ? "FASHION" : "ARTWORKS");
   const scrollKey = `studierzimmer:artwork-scroll:${returnPath}`;
-  const visibleItems = useMemo(() => [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : fashionOnly ? item.is_fashion : !item.is_featured_in), [items, newItems, fashionOnly, featuredOnly]);
+  const visibleItems = useMemo(() => [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in), [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
   const modelIds = useMemo(() => [...new Set(visibleItems.flatMap((item) => item.kind === "model" && item.model_id ? [item.model_id] : []))], [visibleItems]);
   useEffect(() => {
     if (!modelIds.length) { setModels([]); return; }
@@ -243,11 +257,11 @@ function GalleryView({ fashionOnly = false, featuredOnly = false }: { fashionOnl
       <div ref={setScrollRoot} className={`artworks-scroll${selectedId ? " is-detail-open" : ""}`}>
         {loading && <p key={`${section}:loading`} className="artworks-empty artwork-status-blossom" data-blossom role="status">...</p>}
         {error && <div key={`${section}:error`} className="artworks-empty artwork-status-blossom" data-blossom role="alert"><p>{error}</p><button type="button" onClick={() => void reload()}>Riprova</button></div>}
-        {!loading && !error && visibleItems.length === 0 && <p key={`${section}:empty`} className="artworks-empty artwork-status-blossom" data-blossom>{featuredOnly ? "Articoli e apparizioni, prossimamente." : fashionOnly ? "Nessun lavoro Fashion pubblicato." : "Nessun artwork pubblicato."}</p>}
+        {!loading && !error && visibleItems.length === 0 && <p key={`${section}:empty`} className="artworks-empty artwork-status-blossom" data-blossom>{featuredOnly ? "Articoli e apparizioni, prossimamente." : jewelryOnly ? "Nessun contenuto Jewelry pubblicato." : fashionOnly ? "Nessun lavoro Fashion pubblicato." : "Nessun artwork pubblicato."}</p>}
         {centered && <div className="artwork-detail-background" onClick={close} aria-hidden="true" />}
         <main className="artworks-grid" aria-label={sectionTitle}>
-          {visibleItems.map((item, index) => <Card key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
-          {inline.editing && <button className="artwork-add-inline artwork-status-blossom" data-blossom onClick={() => setNewItems((current) => [...current, { id: crypto.randomUUID(), title: "", year: new Date().getFullYear(), kind: "image", media_url: "", poster_url: null, model_id: null, is_fashion: fashionOnly, is_featured_in: featuredOnly, is_published: false, sort_order: (items.length + current.length) * 10, description: "", external_url: null }])}>+ aggiungi {featuredOnly ? "articolo" : "opera"}</button>}
+          {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
+          {inline.editing && <button className="artwork-add-inline artwork-status-blossom" data-blossom onClick={() => setNewItems((current) => [...current, { id: crypto.randomUUID(), title: "", year: new Date().getFullYear(), kind: "image", media_url: "", poster_url: null, model_id: null, is_fashion: fashionOnly, is_jewelry: jewelryOnly, is_featured_in: featuredOnly, is_published: false, sort_order: (items.length + current.length) * 10, description: "", external_url: null }])}>+ aggiungi {featuredOnly ? "articolo" : "opera"}</button>}
         </main>
       </div>
       {!selectedId && !settling && activeYear !== null && <div className="artworks-year artwork-status-blossom" data-blossom aria-live="polite">{activeYear}</div>}
@@ -255,8 +269,8 @@ function GalleryView({ fashionOnly = false, featuredOnly = false }: { fashionOnl
   </LayoutGroup>;
 }
 
-export default function Artworks(props: { fashionOnly?: boolean; featuredOnly?: boolean }) {
-  const section = props.featuredOnly ? "featured" : props.fashionOnly ? "fashion" : "artworks";
+export default function Artworks(props: { fashionOnly?: boolean; featuredOnly?: boolean; jewelryOnly?: boolean }) {
+  const section = props.featuredOnly ? "featured" : props.jewelryOnly ? "jewelry" : props.fashionOnly ? "fashion" : "artworks";
   // React may reuse this route component between sibling galleries. A section
   // owns its entry choreography, scroll restoration, and selected-media state.
   return <GalleryView key={section} {...props} />;

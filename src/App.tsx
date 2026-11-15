@@ -89,7 +89,7 @@ const WatchRoute = ({ category }: { category?: ModelCategory }) => {
   const location = useLocation();
   const initialModelId = new URLSearchParams(location.search).get("model") ?? undefined;
   const requestedReturn = (location.state as { returnTo?: string } | null)?.returnTo;
-  const returnTo = requestedReturn === "/artworks" || requestedReturn === "/fashion" || requestedReturn === "/featured-in" ? requestedReturn : "/";
+  const returnTo = requestedReturn === "/artworks" || requestedReturn === "/fashion" || requestedReturn === "/featured-in" || requestedReturn === "/jewelry" ? requestedReturn : "/";
 
   return (
     <WatchStudio
@@ -154,7 +154,7 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
           <Route path="/admin" element={<AdminRoute />} />
           <Route path="/3d" element={<WatchRoute />} />
           <Route path="/horlogerie" element={<WatchRoute category="horlogerie" />} />
-          <Route path="/jewelry" element={<WatchRoute category="jewelry" />} />
+          <Route path="/jewelry" element={<Artworks jewelryOnly />} />
           <Route path="/models" element={<WatchRoute category="models" />} />
 
           <Route path="/sketches" element={<PublicBooksRoute />} />
