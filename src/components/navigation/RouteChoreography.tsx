@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, type Location } from "react-router-dom";
 import { useInlineSiteEditing } from "@/components/SiteEditControl";
 
-const bookRoute = (pathname: string) => pathname === "/sketches" || pathname === "/books" || pathname.startsWith("/book/");
+const bookRoute = (pathname: string) => pathname === "/notebooks" || pathname.startsWith("/notebooks/") || pathname === "/sketches" || pathname === "/books" || pathname.startsWith("/book/");
 
 /** Keep the old route mounted until all of its visible pieces have folded away.
  * Also handles browser Back/Forward, not only our own navigation buttons. */

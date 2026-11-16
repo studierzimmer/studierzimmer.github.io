@@ -57,8 +57,8 @@ const AdminRoute = () => {
         const bookSession = readBookSession();
         navigate(
           bookSession
-            ? `/book/${encodeURIComponent(bookSession.slug)}`
-            : "/books"
+            ? `/notebooks/${encodeURIComponent(bookSession.slug)}`
+            : "/notebooks"
         );
       }}
       onModels={() => navigate("/3d")}
@@ -77,12 +77,17 @@ const PublicBooksRoute = () => {
       onLogin={() => navigate("/login")}
       onThreeD={() => navigate("/3d")}
       onBookChange={(nextSlug) => {
-        navigate(`/book/${encodeURIComponent(nextSlug)}`, {
+        navigate(`/notebooks/${encodeURIComponent(nextSlug)}`, {
           replace: true,
         });
       }}
     />
   );
+};
+
+const LegacyBookRoute = () => {
+  const { slug } = useParams<{ slug: string }>();
+  return <Navigate to={`/notebooks/${encodeURIComponent(slug ?? "")}`} replace />;
 };
 
 const WatchRoute = ({ category }: { category?: ModelCategory }) => {
@@ -159,9 +164,11 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
           <Route path="/jewelry" element={<Navigate to="/fashionandjewelry" replace />} />
           <Route path="/models" element={<WatchRoute category="models" />} />
 
-          <Route path="/sketches" element={<PublicBooksRoute />} />
-          <Route path="/books" element={<PublicBooksRoute />} />
-          <Route path="/book/:slug" element={<PublicBooksRoute />} />
+          <Route path="/notebooks" element={<PublicBooksRoute />} />
+          <Route path="/notebooks/:slug" element={<PublicBooksRoute />} />
+          <Route path="/sketches" element={<Navigate to="/notebooks" replace />} />
+          <Route path="/books" element={<Navigate to="/notebooks" replace />} />
+          <Route path="/book/:slug" element={<LegacyBookRoute />} />
 
           <Route path="*" element={<NotFound />} />
         </Routes>

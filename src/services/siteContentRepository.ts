@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { orderedMenuDefaults } from "@/lib/siteMenu";
+import { normalizeModelViewModes } from "@/lib/modelViewModes";
 import { normalizeOceanEnvironment } from "@/types/oceanEnvironment";
 import { normalizeOceanLabels } from "@/types/oceanText";
 import type {
@@ -61,6 +62,8 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   bio_line_height: 1.8,
   bio_text_align: "left",
   model_categories: {},
+  model_view_modes: {},
+  gallery_row_gap: {},
   ocean_title: "Studierzimmer-Ozean",
   ocean_subtitle: "studierzimmer.ch",
   ocean_about: "Un erker nel mio Studier Zimmer. Uno spazio da esplorare, tra oggetti, disegni e mare.",
@@ -195,6 +198,11 @@ function normalizeSettings(value: Partial<SiteSettings> | null | undefined): Sit
   Object.entries(input.model_categories ?? {}).forEach(([id, category]) => {
     if (["horlogerie", "jewelry", "models"].includes(category)) categories[id] = category;
   });
+  const galleryRowGap: SiteSettings["gallery_row_gap"] = {};
+  for (const section of ["artworks", "jewelry"] as const) {
+    const gap = input.gallery_row_gap?.[section];
+    if (typeof gap === "number" && Number.isFinite(gap)) galleryRowGap[section] = finiteNumber(gap, 96, 16, 240);
+  }
   return {
     id: "main",
     splash_logo_url: nullableUrl(input.splash_logo_url),
@@ -214,6 +222,8 @@ function normalizeSettings(value: Partial<SiteSettings> | null | undefined): Sit
     bio_line_height: finiteNumber(input.bio_line_height, defaults.bio_line_height, 1, 3),
     bio_text_align: ["left", "center", "justify"].includes(input.bio_text_align) ? input.bio_text_align : defaults.bio_text_align,
     model_categories: categories,
+    model_view_modes: normalizeModelViewModes(input.model_view_modes),
+    gallery_row_gap: galleryRowGap,
     ocean_title: typeof input.ocean_title === "string" ? input.ocean_title : defaults.ocean_title,
     ocean_subtitle: typeof input.ocean_subtitle === "string" ? input.ocean_subtitle : defaults.ocean_subtitle,
     ocean_about: typeof input.ocean_about === "string" ? input.ocean_about : defaults.ocean_about,

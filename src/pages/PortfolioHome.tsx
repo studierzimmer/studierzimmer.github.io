@@ -11,7 +11,7 @@ import { activeMenuItems, moveActiveMenuItem } from "@/lib/siteMenu";
 import "@/styles/portfolio.css";
 
 const destinations: Record<MenuKey, string> = {
-  bio: "/bio", sketches: "/sketches", artworks: "/artworks", horlogerie: "/horlogerie",
+  bio: "/bio", sketches: "/notebooks", artworks: "/artworks", horlogerie: "/horlogerie",
   jewelry: "/fashionandjewelry", fashion: "/fashion", models: "/models", featured: "/featured-in", navigate: "/navigate",
 };
 

@@ -1215,7 +1215,7 @@ export default function AdminBookManager({
               </header>
               <details className="admin-editor-reference">
                 <summary>Link e cartella</summary>
-                <p>/book/{selectedBook.slug}</p>
+                <p>/notebooks/{selectedBook.slug}</p>
                 <p>book-pages/{selectedBook.storage_folder}/</p>
               </details>
               <div className="admin-editor-tabs has-comments" role="tablist" aria-label="Gestione del libro">

@@ -1,5 +1,6 @@
 import type { OceanEnvironmentSettings } from "./oceanEnvironment";
 import type { OceanLabels } from "./oceanText";
+import type { ModelViewMode } from "@/lib/modelViewModes";
 
 export type MenuKey =
   | "bio"
@@ -39,6 +40,8 @@ export interface SiteSettings {
   bio_line_height: number;
   bio_text_align: "left" | "center" | "justify";
   model_categories: Record<string, ModelCategory>;
+  model_view_modes?: Record<string, ModelViewMode[]>;
+  gallery_row_gap?: Partial<Record<"artworks" | "jewelry", number>>;
   ocean_title?: string;
   ocean_subtitle?: string;
   ocean_about?: string;

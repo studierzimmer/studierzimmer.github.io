@@ -16,6 +16,7 @@ function compile(file, require = (id) => { throw new Error(`Unexpected dependenc
 }
 
 const imageHelpers = compile("../src/lib/artworkImages.ts");
+const modelViewModes = compile("../src/lib/modelViewModes.ts");
 class FileFixture extends Blob {
   constructor(chunks, name, options) { super(chunks, options); this.name = name; }
 }
@@ -97,6 +98,7 @@ function repository({ mode = "local", memory = memoryDatabase(), rows = [], resp
   const api = compile("../src/services/siteContentRepository.ts", (id) => {
     if (id === "@/lib/supabase") return { supabase };
     if (id === "@/lib/artworkImages") return imageHelpers;
+    if (id === "@/lib/modelViewModes") return modelViewModes;
     if (id === "@/lib/siteMenu") return { orderedMenuDefaults: (defaults) => defaults };
     if (id === "@/types/oceanEnvironment") return { normalizeOceanEnvironment: (value) => value ?? {} };
     if (id === "@/types/oceanText") return { normalizeOceanLabels: (value) => value ?? {} };
@@ -427,11 +429,19 @@ function imageFieldsFixture(initial = { media_url: "", additional_images: [] }) 
   assert.deepEqual(Array.from(calls.saves[1].additional_images), [second, third]);
 }
 
-function carouselFixture(changes = {}) {
+function carouselFixture(changes = {}, { deferSheetAnimations = false } = {}) {
   const harness = hookHarness();
   let listener, position = 0, now = 1000;
-  const calls = { animations: [], stops: 0 };
+  let timerId = 0;
+  const timers = new Map(), completions = [];
+  const calls = { animations: [], stops: 0, sheetStarts: [], sheetSets: [], sheetStops: 0, dragCancels: 0 };
   const x = { get: () => position, set: (value) => { position = value; listener?.(value); } };
+  const dragControls = { cancel: () => { calls.dragCancels++; } };
+  const sheetControls = {
+    start(mode, options) { calls.sheetStarts.push({ mode, options }); return new Promise((resolve) => { completions.push(resolve); if (!deferSheetAnimations) queueMicrotask(resolve); }); },
+    stop() { calls.sheetStops++; },
+    set(mode) { calls.sheetSets.push(mode); },
+  };
   const primaryNode = { type: "img", props: { src: primary, "data-persistent-cover": true } };
   let props = { images: [primary, second, third, "/original-four.png", "/original-five.png"], children: primaryNode, title: "Original title", open: false, active: false, reducedMotion: false, width: 240, height: 180, viewportWidth: 390, ...changes };
   const api = compile("../src/components/artworks/ArtworkImageCarousel.tsx", (id) => {
@@ -439,20 +449,27 @@ function carouselFixture(changes = {}) {
     if (id === "react/jsx-runtime") return jsx;
     if (id === "framer-motion") return {
       motion: new Proxy({}, { get: (_, name) => `motion.${String(name)}` }),
+      useAnimationControls: () => sheetControls, useDragControls: () => dragControls,
       useMotionValue: () => x,
       useMotionValueEvent(value, event, callback) { assert.equal(value, x); assert.equal(event, "change"); listener = callback; },
       animate(value, target, options) { assert.equal(value, x); calls.animations.push({ target, options }); value.set(target); return { stop: () => { calls.stops++; } }; },
     };
     if (id.endsWith(".css")) return {};
     throw new Error(`Unexpected carousel dependency: ${id}`);
-  }, { Date: class extends Date { static now() { return now; } } });
+  }, {
+    Date: class extends Date { static now() { return now; } },
+    window: { setTimeout(callback, delay) { const id = ++timerId; timers.set(id, { deadline: now + delay, callback }); return id; }, clearTimeout: (id) => timers.delete(id) },
+  }, (source) => source, "exports.test = { stackGeometry };");
   return {
-    calls, x, primaryNode, unmount: () => harness.unmount(), advanceTime: (milliseconds) => { now += milliseconds; },
+    calls, x, primaryNode, geometry: api.test.stackGeometry, unmount: () => harness.unmount(),
+    completeSheet: (index) => completions[index](), get pendingTimers() { return timers.size; },
+    advanceTime(milliseconds) { now += milliseconds; for (const [id, timer] of timers) { if (timer.deadline <= now) { timers.delete(id); timer.callback(); } } },
     render(changed = {}) { props = { ...props, ...changed }; return harness.render(() => api.default(props)); },
   };
 }
 const ribbon = (tree) => nodes(tree, (node) => node.props?.className === "artwork-image-ribbon")[0];
 const sheets = (tree) => nodes(tree, (node) => node.props?.["data-image-index"] !== undefined);
+const sheetPose = (sheet, open) => sheet.props.variants[open ? "open" : "closed"];
 const carouselRoot = (tree) => nodes(tree, (node) => node.props?.role === "group")[0];
 const counter = (tree) => nodeText(nodes(tree, (node) => node.props?.["aria-live"] === "polite")[0]);
 function keyEvent(key) {
@@ -468,7 +485,7 @@ function keyEvent(key) {
   assert.equal(closedKey.prevented, 0, "a closed stack does not hijack gallery keyboard input");
   tree = fixture.render({ active: true }); tree = fixture.render();
   assert.deepEqual(nodes(tree, (node) => node.type === "img").map((node) => node.props.src), [primary, second, third], "nearby closed stacks warm only two extras and keep original URLs");
-  assert.ok(sheets(tree).slice(1).every((sheet) => sheet.props.animate.y > 0 && sheet.props.animate.x < 0), "extra sheets visibly stack behind the cover");
+  assert.ok(sheets(tree).slice(1).every((sheet) => sheetPose(sheet, false).y > 0 && sheetPose(sheet, false).x < 0), "extra sheets visibly stack behind the cover");
   const firstCover = nodes(tree, (node) => node.props?.["data-persistent-cover"])[0];
   assert.equal(firstCover, fixture.primaryNode);
   tree = fixture.render({ open: true }); tree = fixture.render();
@@ -476,8 +493,8 @@ function keyEvent(key) {
   assert.equal(ribbon(tree).props.drag, "x");
   assert.equal(counter(tree), "1 / 5");
   assert.equal(nodes(tree, (node) => node.props?.["data-persistent-cover"])[0], firstCover, "opening does not replace or duplicate the primary Preview node");
-  assert.ok(sheets(tree).every((sheet) => sheet.props.animate.y === 0 && sheet.props.animate.rotate === 0), "opening unfolds into a single horizontal row");
-  assert.ok(sheets(tree).every((sheet, index, all) => index === 0 || sheet.props.animate.x > all[index - 1].props.animate.x));
+  assert.ok(sheets(tree).every((sheet) => sheetPose(sheet, true).y === 0 && sheetPose(sheet, true).rotate === 0), "opening unfolds into a single horizontal row");
+  assert.ok(sheets(tree).every((sheet, index, all) => index === 0 || sheetPose(sheet, true).x > sheetPose(all[index - 1], true).x));
   const right = keyEvent("ArrowRight"); carouselRoot(tree).props.onKeyDown(right); tree = fixture.render();
   assert.equal(counter(tree), "2 / 5"); assert.equal(right.prevented, 1); assert.equal(right.stopped, 1, "carousel keys never bubble into parent selection/close handlers");
   const end = keyEvent("End"); carouselRoot(tree).props.onKeyDown(end); tree = fixture.render(); tree = fixture.render();
@@ -493,7 +510,7 @@ function keyEvent(key) {
   assert.equal(fixture.x.get(), 0);
   assert.deepEqual(nodes(tree, (node) => node.type === "img").map((node) => node.props.src), warmed, "closing retains warmed image nodes for the refolding transition");
   assert.equal(nodes(tree, (node) => node.props?.["data-persistent-cover"])[0], firstCover);
-  assert.ok(sheets(tree).every((sheet) => !Object.hasOwn(sheet.props.animate, "opacity") && !Object.hasOwn(sheet.props.style, "opacity") && sheet.props.initial === false), "neither opening nor closing fades the original images");
+  assert.ok(sheets(tree).every((sheet) => !Object.hasOwn(sheetPose(sheet, true), "opacity") && !Object.hasOwn(sheetPose(sheet, false), "opacity") && !Object.hasOwn(sheet.props.style, "opacity")), "neither opening nor closing fades the original images");
   assert.ok(nodes(tree, (node) => node.type === "img").every((node) => !node.props.srcSet && !node.props.srcset), "the component never substitutes lower-resolution source variants");
 }
 {
@@ -536,6 +553,106 @@ function keyEvent(key) {
   assert.ok(fixture.calls.animations.every((animation) => animation.options.duration === 0));
   assert.ok(sheets(tree).every((sheet) => sheet.props.transition.duration === 0), "reduced-motion removes both unfolding and snapping animation");
 }
+{
+  const fixture = carouselFixture();
+  for (const [coverWidth, coverHeight, viewportWidth, extraRatios] of [
+    [720, 360, 390, [.5, 4, 1]],
+    [320, 640, 1280, [3, .25, 1]],
+    [1100, 580, 1440, [12, .4, 1.5]],
+  ]) {
+    const urls = ["cover", ...extraRatios.map((_, index) => `original-${index}`)];
+    const ratios = Object.fromEntries(urls.slice(1).map((url, index) => [url, extraRatios[index]]));
+    const geometry = fixture.geometry(urls, ratios, coverWidth, coverHeight, viewportWidth);
+    geometry.poses.slice(1).forEach((poses, index) => {
+      for (const mode of ["open", "closed"]) {
+        const pose = poses[mode];
+        assert.ok(Math.abs(pose.width / pose.height - extraRatios[index]) < 1e-9, `${mode} sheet exactly hugs its own original image ratio, independent of the cover`);
+        assert.ok(pose.width > 0 && pose.height > 0 && pose.height <= coverHeight);
+      }
+      assert.ok(poses.open.width <= viewportWidth - 36, "a panorama is reduced proportionally when it hits the viewport width limit");
+      assert.ok(poses.closed.width <= coverWidth);
+      const folded = poses.closed;
+      const angle = Math.abs(folded.rotate) * Math.PI / 180;
+      const bottom = folded.y + folded.height / 2 + (folded.width * Math.sin(angle) + folded.height * Math.cos(angle)) * folded.scale / 2;
+      assert.ok(bottom <= coverHeight + 15.001, "natural-size peeks, including rotation, never paint over the caption's 20px gap");
+    });
+  }
+  const panorama = fixture.geometry(["cover", "panorama"], { panorama: 4 }, 720, 360, 390).poses[1];
+  assert.equal(panorama.open.width, 354); assert.equal(panorama.open.height, 88.5);
+  assert.equal(panorama.closed.width, 720); assert.equal(panorama.closed.height, 180);
+  const css = fs.readFileSync(new URL("../src/components/artworks/artwork-image-carousel.css", import.meta.url), "utf8");
+  assert.match(css, /\.artwork-image-sheet\s*\{[^}]*background:\s*transparent/);
+  assert.doesNotMatch(css, /background:\s*var\(--artwork-sheet-background|#eeefec/);
+}
+{
+  const fixture = carouselFixture({ active: true });
+  let tree = fixture.render(); tree = fixture.render();
+  nodes(sheets(tree)[1], (node) => node.type === "img")[0].props.onLoad({ currentTarget: { naturalWidth: 10000, naturalHeight: 1000 } });
+  tree = fixture.render();
+  const extra = sheets(tree)[1];
+  assert.equal(extra.props.style.height, undefined, "extra sheets never inherit the cover's fixed-height rectangle");
+  assert.equal(sheetPose(extra, false).width / sheetPose(extra, false).height, 10);
+  assert.equal(sheetPose(extra, true).width / sheetPose(extra, true).height, 10);
+  assert.equal(nodes(extra, (node) => node.type === "img")[0].props.src, second);
+}
+{
+  const fixture = carouselFixture({ active: true, open: true }, { deferSheetAnimations: true });
+  let tree = fixture.render(); tree = fixture.render();
+  ribbon(tree).props.onDragStart(); fixture.x.set(-280);
+  const cancellations = fixture.calls.dragCancels;
+  tree = fixture.render({ open: false, width: 200, height: 150 });
+  assert.ok(fixture.calls.dragCancels > cancellations, "closing explicitly cancels the active Framer drag controller");
+  fixture.advanceTime(400);
+  tree = fixture.render({ width: 160, height: 120 });
+  nodes(sheets(tree)[1], (node) => node.type === "img")[0].props.onLoad({ currentTarget: { naturalWidth: 9000, naturalHeight: 2000 } });
+  tree = fixture.render();
+  fixture.advanceTime(259);
+  assert.equal(fixture.calls.sheetSets.length, 0, "an unfinished fold remains animated until its original deadline");
+  fixture.advanceTime(1);
+  assert.equal(fixture.calls.sheetSets.at(-1), "closed", "even an interrupted spring reaches the exact folded pose by the close deadline");
+  assert.equal(fixture.x.get(), 0);
+  assert.equal(fixture.pendingTimers, 0, "resize/image decoding cannot repeatedly postpone closure");
+  assert.equal(sheetPose(sheets(tree)[1], false).width / sheetPose(sheets(tree)[1], false).height, 4.5);
+}
+{
+  const fixture = carouselFixture({ active: true, open: true }, { deferSheetAnimations: true });
+  let tree = fixture.render(); tree = fixture.render();
+  ribbon(tree).props.onDragStart(); fixture.x.set(-235);
+  const staleDragEnd = ribbon(tree).props.onDragEnd;
+  fixture.render({ open: false });
+  fixture.advanceTime(100);
+  tree = fixture.render({ open: true });
+  fixture.completeSheet(1); await flush();
+  assert.equal(fixture.calls.sheetSets.length, 0, "a previous fold completion cannot close a newly reopened carousel");
+  staleDragEnd({}, { velocity: { x: -5000 } }); tree = fixture.render();
+  assert.equal(counter(tree), "1 / 5", "a release from the cancelled old gesture cannot reselect a reopened carousel");
+  assert.equal(fixture.x.get(), 0);
+  fixture.advanceTime(700);
+  assert.equal(fixture.calls.sheetSets.length, 0, "the cancelled fold's fallback timer cannot affect the reopened stack");
+  fixture.render({ open: false });
+  fixture.completeSheet(0); fixture.completeSheet(2); await flush();
+  assert.equal(fixture.calls.sheetSets.length, 0, "late opening completions cannot unfold the new closing cycle");
+  fixture.advanceTime(660);
+  assert.equal(fixture.calls.sheetSets.at(-1), "closed");
+  const sets = fixture.calls.sheetSets.length;
+  fixture.unmount();
+  assert.equal(fixture.pendingTimers, 0);
+  fixture.completeSheet(3); await flush();
+  assert.equal(fixture.calls.sheetSets.length, sets, "animation completions after unmount perform no stale controller writes");
+}
+{
+  const fixture = carouselFixture({ active: true, open: true }, { deferSheetAnimations: true });
+  let tree = fixture.render(); tree = fixture.render();
+  ribbon(tree).props.onDragStart(); fixture.x.set(-235);
+  ribbon(tree).props.onPointerCancel(); tree = fixture.render();
+  assert.equal(counter(tree), "2 / 5", "pointer cancellation settles to the actual nearest original");
+  const target = fixture.x.get();
+  ribbon(tree).props.onDragEnd({}, { velocity: { x: -9000 } });
+  assert.equal(fixture.x.get(), target, "a second drag-end after pointer cancellation cannot override the settled position");
+  tree = fixture.render({ open: false, reducedMotion: true });
+  assert.equal(fixture.calls.sheetSets.at(-1), "closed");
+  assert.equal(fixture.x.get(), 0); assert.equal(fixture.pendingTimers, 0, "reduced-motion folds immediately without a delayed fallback");
+}
 
 function galleryFixture({ editing = false } = {}) {
   const harness = hookHarness(), navigations = [], scrollReads = [], layoutEffects = [];
@@ -563,7 +680,7 @@ function galleryFixture({ editing = false } = {}) {
     if (id.endsWith(".css")) return {};
     throw new Error(`Unexpected gallery dependency: ${id}`);
   }, { document: { hidden: false }, sessionStorage: { getItem: (key) => { scrollReads.push(key); return "96"; } } }, (source) => source, "exports.test = { GalleryView };");
-  return { api, items, navigations, scrollReads, runLayoutEffect: (index) => layoutEffects[index](), render: (props) => { layoutEffects.length = 0; return harness.render(() => api.test.GalleryView(props)); } };
+  return { api, items, navigations, scrollReads, restoreScroll: () => layoutEffects.find((effect) => /sessionStorage\.getItem/.test(String(effect)))(), render: (props) => { layoutEffects.length = 0; return harness.render(() => api.test.GalleryView(props)); } };
 }
 {
   const fixture = galleryFixture();
@@ -580,7 +697,7 @@ function galleryFixture({ editing = false } = {}) {
   const scroll = { scrollTop: 0 };
   nodes(tree, (node) => node.props?.className?.startsWith("artworks-scroll"))[0].props.ref(scroll);
   fixture.render({ jewelryOnly: true });
-  fixture.runLayoutEffect(0);
+  fixture.restoreScroll();
   assert.deepEqual(fixture.scrollReads, ["studierzimmer:artwork-scroll:/jewelry"], "changing the public URL retains the owner's existing Jewelry scroll memory");
   assert.equal(scroll.scrollTop, 96);
 }

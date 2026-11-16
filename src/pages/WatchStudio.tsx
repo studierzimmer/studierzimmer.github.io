@@ -56,6 +56,7 @@ import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditCont
 import { updateThreeDModel } from "@/services/threeDModelRepository";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { modelCategoryFor } from "@/lib/modelCategories";
+import { modelViewModesFor } from "@/lib/modelViewModes";
 import type { ModelCategory } from "@/types/siteContent";
 import { createCameraReturn, type CameraReturnHandle } from "@/components/artworks/cameraReturn";
 
@@ -528,38 +529,23 @@ const watchStudioStyles = `
 
 .watch-info-drawer {
   top: 0;
-  right: 0;
+  left: 0;
   bottom: 0;
   width: min(460px, calc(100vw - 18px));
-  transform: translate3d(104%, 0, 0);
-  opacity: 0;
-  background: rgb(207 207 207);
+  transform: translate3d(-104%, 0, 0);
+  background: #f3f4f3;
   pointer-events: none;
-  transition:
-    transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1),
-    opacity 360ms ease;
-  will-change: transform, opacity;
+  transition: transform 720ms cubic-bezier(0.22, 0.88, 0.3, 1);
+  will-change: transform;
 }
 
 .watch-info-drawer.is-open {
   transform: translate3d(0, 0, 0);
-  opacity: 1;
   pointer-events: auto;
 }
 
 .watch-info-piece {
-  transform-origin: 50% 50%;
-  transform: scale(0.72);
-  opacity: 0;
-  transition:
-    transform 560ms cubic-bezier(0.22, 0.88, 0.3, 1),
-    opacity 280ms ease;
-  transition-delay: var(--info-delay, 0ms);
-}
-
-.watch-info-drawer.is-open .watch-info-piece {
-  transform: scale(1);
-  opacity: 1;
+  transform: none;
 }
 
 .watch-render-option {
@@ -595,12 +581,11 @@ const watchStudioStyles = `
 .watch-model-stage { opacity:1 !important; }
 .watch-model-stage.is-outside { transform:scale(0); }
 .watch-model-stage.is-entering,.watch-model-stage.is-leaving,.watch-studio-piece.is-entering,.watch-studio-piece.is-leaving { animation-name:watch-elastic-scale; }
-.watch-info-drawer { opacity:1; transform:scale(0); transform-origin:90% 20%; background:#f3f4f3; transition:transform 720ms cubic-bezier(.22,1.1,.3,1); }
-.watch-info-drawer.is-open { transform:scale(1); }
+.watch-info-drawer { opacity:1; }
 .watch-model-drawer { opacity:1; transform:translate3d(0,104%,0); background:#f3f4f3; transition:transform 720ms cubic-bezier(.22,1.1,.3,1); will-change:transform; }
 .watch-model-drawer.is-open { transform:translate3d(0,0,0); }
-.watch-info-piece,.watch-model-list-item { opacity:1; transform:scale(0); transition:transform 650ms cubic-bezier(.22,1.1,.3,1); }
-.watch-info-drawer.is-open .watch-info-piece,.watch-model-drawer.is-open .watch-model-list-item { transform:scale(1); }
+.watch-model-list-item { opacity:1; transform:scale(0); transition:transform 650ms cubic-bezier(.22,1.1,.3,1); }
+.watch-model-drawer.is-open .watch-model-list-item { transform:scale(1); }
 
 @media (prefers-reduced-motion: reduce) {
   .watch-studio,
@@ -1436,7 +1421,11 @@ export default function WatchStudio({
     // whose already-completed loader will never emit another completion.
     setModelMotion("outside");
   }, [modelReadinessKey]);
-  const sceneMode = renderMode;
+  const allowedViewModes = modelViewModesFor(selectedModel.id, settings.model_view_modes);
+  const availableRenderModes = RENDER_MODES.filter((mode) => allowedViewModes.includes(mode.id === "pbr" ? "render" : mode.id));
+  // Derive the actual scene immediately: changing models must never render a
+  // disallowed style for a frame while an effect catches up with selection.
+  const sceneMode = availableRenderModes.some((mode) => mode.id === renderMode) ? renderMode : availableRenderModes[0].id;
   const canAutoHideNav =
     entered &&
     !leaving &&
@@ -1906,7 +1895,7 @@ export default function WatchStudio({
     <>
       <style>{watchStudioStyles}</style>
 
-      <SectionNavigation section={category ?? "models"} onIndex={onBack} onInfo={handleInfoToggle}><button type="button" aria-expanded={modelListOpen} aria-controls="watch-model-library" onClick={() => { setInfoOpen(false); setModelListOpen((open) => !open); }}>Index</button></SectionNavigation>
+      <SectionNavigation section={category ?? "models"} onIndex={onBack} onInfo={handleInfoToggle} infoExpanded={infoOpen} infoControls="watch-model-info"><button type="button" aria-expanded={modelListOpen} aria-controls="watch-model-library" onClick={() => { setInfoOpen(false); setModelListOpen((open) => !open); }}>List</button></SectionNavigation>
       <SiteEditControl section={category ?? "models"} />
 
       <div
@@ -1976,6 +1965,7 @@ export default function WatchStudio({
       <aside
         id="watch-model-info"
         data-watch-info-panel
+        ref={(node) => { if (node) node.inert = !infoOpen; }}
         aria-hidden={!infoOpen}
         className={`watch-info-drawer fixed z-[75] flex flex-col overflow-hidden ${
           infoOpen ? "is-open" : ""
@@ -2014,14 +2004,14 @@ export default function WatchStudio({
             style={{ "--info-delay": "210ms" } as React.CSSProperties}
             aria-label="3D renderer style"
           >
-            {RENDER_MODES.map((mode) => (
+            {availableRenderModes.map((mode) => (
               <button
                 key={mode.id}
                 type="button"
                 onClick={() => setRenderMode(mode.id)}
-                aria-pressed={renderMode === mode.id}
+                aria-pressed={sceneMode === mode.id}
                 className={`watch-render-option ${
-                  renderMode === mode.id ? "is-active" : ""
+                  sceneMode === mode.id ? "is-active" : ""
                 }`}
               >
                 {mode.label}

@@ -9,12 +9,14 @@ interface Props {
   title?: string;
   onIndex?: () => void;
   onInfo?: () => void;
+  infoExpanded?: boolean;
+  infoControls?: string;
   onSection?: () => void;
   children?: ReactNode;
   className?: string;
 }
 
-export default function SectionNavigation({ section, title, onIndex, onInfo, onSection, children, className = "" }: Props) {
+export default function SectionNavigation({ section, title, onIndex, onInfo, infoExpanded, infoControls, onSection, children, className = "" }: Props) {
   const navigate = useNavigate();
   const { editing, settings, draft, update } = useInlineSiteEditing();
   const content = editing ? draft : settings;
@@ -58,7 +60,7 @@ export default function SectionNavigation({ section, title, onIndex, onInfo, onS
   return (
     <header className={`section-navigation blossom ${visible ? "is-revealed" : "is-concealed"} ${className}`} data-blossom data-portfolio-navigation data-section={section} data-navigation-visible={visible ? "true" : "false"} onPointerEnter={(event) => { if (event.pointerType === "mouse") { hovered.current = true; clearTimeout(timeout.current); } }} onPointerLeave={() => { hovered.current = false; schedule(); }}>
       <nav ref={(node) => { if (node) node.inert = !visible; }} aria-label={`Navigazione ${label}`} className="section-navigation-items" onFocusCapture={() => { focused.current = true; setVisible(true); clearTimeout(timeout.current); }} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) { focused.current = false; schedule(); } }}>
-        {onInfo && (section === "horlogerie" || section === "jewelry") && <button onClick={onInfo} type="button">INFO</button>}
+        {onInfo && (section === "horlogerie" || section === "jewelry") && <button onClick={onInfo} type="button" data-watch-info-toggle aria-expanded={infoExpanded} aria-controls={infoControls}>info</button>}
         {editing && item ? <input className="section-title-input" aria-label="Titolo della sezione" value={item.label} onChange={(event) => update({ menu_items: draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, label: event.target.value } : entry) })} /> : onSection ? <button onClick={onSection} type="button" className="section-navigation-title">{label}</button> : <span className="section-navigation-title">{label}</span>}
         {children}
         <span aria-hidden="true" className="section-navigation-bullet">•</span>

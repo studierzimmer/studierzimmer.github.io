@@ -25,6 +25,8 @@ import type { ThreeDModel } from "@/types/threeDModels";
 import type { ModelProcessingProgress } from "@/services/stepModelConverter";
 import { useSiteContent } from "@/hooks/useSiteContent";
 import { modelCategoryFor } from "@/lib/modelCategories";
+import { DEFAULT_MODEL_VIEW_MODES, MODEL_VIEW_MODES, modelViewModesFor, type ModelViewMode } from "@/lib/modelViewModes";
+import { getSiteContentStatus, getSiteSettings } from "@/services/siteContentRepository";
 import type { ModelCategory } from "@/types/siteContent";
 import "./AdminWorkspace.css";
 
@@ -54,10 +56,19 @@ function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
+async function settingsForModelUpdate() {
+  const latest = await getSiteSettings();
+  const failure = getSiteContentStatus("settings").error;
+  // A failed public read deliberately returns defaults. Those defaults must
+  // never become a replacement for an owner's existing JSON during a merge.
+  if (failure) throw new Error(`Impossibile leggere le impostazioni attuali. Riprova senza perdere le modifiche. ${failure}`);
+  return latest;
+}
+
 export default function AdminThreeDModelManager({
   onModelsChanged,
 }: AdminThreeDModelManagerProps) {
-  const { settings, saveSettings } = useSiteContent();
+  const { settings, loading: settingsLoading, saveSettings } = useSiteContent();
   const [categoryBusy, setCategoryBusy] = useState(false);
   const [models, setModels] = useState<ThreeDModel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,6 +85,9 @@ export default function AdminThreeDModelManager({
   const [editFeatured, setEditFeatured] = useState(false);
   const [editWatch, setEditWatch] = useState(false);
   const [editSortOrder, setEditSortOrder] = useState(0);
+  const [editViewModes, setEditViewModes] = useState<ModelViewMode[]>([...DEFAULT_MODEL_VIEW_MODES]);
+  const viewModesOwner = useRef<string | null>(null);
+  const viewModesDirty = useRef(false);
   const [editPlasterColor, setEditPlasterColor] = useState<RgbColor>(
     DEFAULT_PLASTER_COLOR
   );
@@ -85,6 +99,7 @@ export default function AdminThreeDModelManager({
     () => models.find((model) => model.id === selectedId) ?? null,
     [models, selectedId]
   );
+  const viewModeModelId = selectedModel?.id;
 
   const reload = useCallback(async (preferredId?: string | null) => {
     const nextModels = await listAllThreeDModelsForAdmin();
@@ -134,6 +149,17 @@ export default function AdminThreeDModelManager({
     if (hdriFileRef.current) hdriFileRef.current.value = "";
   }, [selectedModel]);
 
+  useEffect(() => {
+    if (!viewModeModelId) return;
+    // Refresh untouched settings, but never replace a staged checkbox change
+    // when a separate category/settings save updates the shared JSON store.
+    if (viewModesOwner.current !== viewModeModelId || !viewModesDirty.current) {
+      viewModesOwner.current = viewModeModelId;
+      viewModesDirty.current = false;
+      setEditViewModes(modelViewModesFor(viewModeModelId, settings.model_view_modes));
+    }
+  }, [viewModeModelId, settings.model_view_modes]);
+
   const clearMessages = () => {
     setNotice(null);
     setError(null);
@@ -170,11 +196,12 @@ export default function AdminThreeDModelManager({
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedModel) return;
+    if (!selectedModel || busy || categoryBusy || settingsLoading) return;
 
     clearMessages();
     setBusy(true);
     try {
+      const latestForModes = viewModesDirty.current ? await settingsForModelUpdate() : null;
       await updateThreeDModel(selectedModel.id, {
         name: editName.trim(),
         description: editDescription.trim(),
@@ -189,6 +216,12 @@ export default function AdminThreeDModelManager({
 
       if (editFeatured && !selectedModel.is_featured) {
         await setFeaturedThreeDModel(selectedModel.id);
+      }
+      if (latestForModes) {
+        if (JSON.stringify(editViewModes) !== JSON.stringify(modelViewModesFor(selectedModel.id, latestForModes.model_view_modes))) {
+          await saveSettings({ ...latestForModes, model_view_modes: { ...latestForModes.model_view_modes, [selectedModel.id]: [...editViewModes] } });
+        }
+        viewModesDirty.current = false;
       }
       await reload(selectedModel.id);
       setNotice("3D model settings saved.");
@@ -330,6 +363,7 @@ export default function AdminThreeDModelManager({
                 key={model.id}
                 type="button"
                 aria-pressed={model.id === selectedId}
+                disabled={busy || categoryBusy}
                 onClick={() => setSelectedId(model.id)}
                 className={`block w-full border-0 px-2 py-3 text-left transition-colors ${
                   model.id === selectedId ? "bg-black text-white" : "bg-transparent"
@@ -390,7 +424,8 @@ export default function AdminThreeDModelManager({
                   const category = event.target.value as ModelCategory;
                   setCategoryBusy(true);
                   try {
-                    await saveSettings({ ...settings, model_categories: { ...settings.model_categories, [selectedModel.id]: category } });
+                    const latest = await settingsForModelUpdate();
+                    await saveSettings({ ...latest, model_categories: { ...latest.model_categories, [selectedModel.id]: category } });
                     setNotice("Sezione aggiornata.");
                     onModelsChanged?.();
                   } catch (categoryError) { setError(messageFrom(categoryError)); }
@@ -410,6 +445,21 @@ export default function AdminThreeDModelManager({
             <details className="admin-editor-group">
               <summary><span>Materiale e luce<small>{isStlModel(selectedModel) ? "Colore STL e ambiente HDRI" : "Ambiente HDRI per il render PBR"}</small></span><span aria-hidden="true">＋</span></summary>
               <div className="admin-editor-fields">
+                <fieldset className="admin-model-view-modes" disabled={busy || categoryBusy || settingsLoading}>
+                  <legend>Viste disponibili al pubblico</legend>
+                  <p className="admin-editor-help">Scegli almeno una vista per questo modello. Le modifiche si applicano con Salva modello.</p>
+                  <div>{MODEL_VIEW_MODES.map((mode) => {
+                    const checked = editViewModes.includes(mode.id);
+                    return <label key={mode.id}><input type="checkbox" checked={checked} disabled={checked && editViewModes.length === 1} onChange={(event) => {
+                      const enabled = event.target.checked;
+                      setEditViewModes((current) => {
+                        if (!enabled && current.length === 1) return current;
+                        viewModesDirty.current = true;
+                        return MODEL_VIEW_MODES.filter((option) => option.id === mode.id ? enabled : current.includes(option.id)).map((option) => option.id);
+                      });
+                    }} /><span>{mode.label}</span></label>;
+                  })}</div>
+                </fieldset>
                 {isStlModel(selectedModel) && <div>
                   <BookBackgroundColorPicker key={`${selectedModel.id}-${selectedModel.file_name}`} value={editPlasterColor} onChange={setEditPlasterColor} legend="Colore materiale STL" ariaLabel="Colore materiale STL" />
                   <p className="admin-editor-help">Colore del materiale in PBR. Arctic resta neutro; Pen resta bianco e nero.</p>
@@ -439,7 +489,7 @@ export default function AdminThreeDModelManager({
 
             <div className="admin-model-savebar admin-editor-savebar">
               <span>{busy || categoryBusy ? "Operazione in corso…" : "Testi e impostazioni si applicano al salvataggio."}</span>
-              <button type="submit" disabled={busy || categoryBusy} className="admin-primary-action">{busy ? "Attendi…" : "Salva modello"}</button>
+              <button type="submit" disabled={busy || categoryBusy || settingsLoading} className="admin-primary-action">{busy ? "Attendi…" : "Salva modello"}</button>
             </div>
           </form>
         )}

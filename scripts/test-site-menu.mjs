@@ -12,11 +12,13 @@ function compile(source, require = () => { throw new Error("Unexpected dependenc
 const helpers = compile(fs.readFileSync(new URL("../src/lib/siteMenu.ts", import.meta.url), "utf8"));
 const ocean = compile(fs.readFileSync(new URL("../src/types/oceanEnvironment.ts", import.meta.url), "utf8"));
 const oceanText = compile(fs.readFileSync(new URL("../src/types/oceanText.ts", import.meta.url), "utf8"));
+const modelViews = compile(fs.readFileSync(new URL("../src/lib/modelViewModes.ts", import.meta.url), "utf8"));
 let repository = fs.readFileSync(new URL("../src/services/siteContentRepository.ts", import.meta.url), "utf8");
 repository = repository.replaceAll("import.meta.env.VITE_SITE_CONTENT_MODE", '"local"').replaceAll("import.meta.env.DEV", "true");
 const api = compile(`${repository}\nexport { normalizeSettings };`, (id) => {
   if (id === "@/lib/supabase") return { supabase: {} };
   if (id === "@/lib/siteMenu") return helpers;
+  if (id === "@/lib/modelViewModes") return modelViews;
   if (id === "@/types/oceanEnvironment") return ocean;
   if (id === "@/types/oceanText") return oceanText;
   throw new Error(`Unexpected dependency ${id}`);
@@ -77,6 +79,13 @@ assert.deepEqual(afterNormalization, expectedReorder, "normalization/save/reload
 assert.equal(defaults.find((item) => item.id === "jewelry").label, "Fashion and Jewelry");
 assert.equal(api.normalizeSettings(custom).menu_items.find((item) => item.id === "jewelry").label, "Fashion and Jewelry", "a new default never overwrites the owner's renamed label");
 
+const layoutSettings = api.normalizeSettings({ ...custom, gallery_row_gap: { artworks: 120, jewelry: 48 }, model_view_modes: { "original-watch-id": ["arctic", "pen"], "original-model-id": ["render"] } });
+assert.deepEqual(plain(layoutSettings.gallery_row_gap), { artworks: 120, jewelry: 48 });
+assert.deepEqual(plain(layoutSettings.model_view_modes), { "original-watch-id": ["arctic", "pen"], "original-model-id": ["render"] });
+assert.deepEqual(plain(api.normalizeSettings(layoutSettings)), plain(layoutSettings), "row spacing and per-model view choices survive normalization without touching the catalogue or other saved settings");
+assert.deepEqual(plain(api.normalizeSettings({ gallery_row_gap: { artworks: -100, jewelry: 500 } }).gallery_row_gap), { artworks: 16, jewelry: 240 }, "row spacing always leaves a positive non-overlapping gap");
+assert.deepEqual(plain(api.normalizeSettings({ gallery_row_gap: { artworks: Number.NaN, jewelry: "64" } }).gallery_row_gap), {}, "invalid layout values preserve responsive defaults");
+
 function nodes(node, predicate) {
   const found = [];
   const visit = (item) => { if (Array.isArray(item)) return item.forEach(visit); if (!item || typeof item !== "object") return; if (predicate(item)) found.push(item); visit(item.props?.children); };
@@ -118,6 +127,9 @@ function componentFixture({ editing = false } = {}) {
   assert.equal(titleImage.props.alt, "Fashion and Jewelry", "the home PNG retains the typed title as its accessible text");
   nodes(jewelry, (node) => node.type === "button")[0].props.onClick();
   assert.deepEqual(fixture.navigations, ["/fashionandjewelry"], "the preserved internal jewelry menu key opens the new canonical public URL");
+  const notebooks = entries.find((node) => node.props["data-menu-entry"] === "sketches");
+  nodes(notebooks, (node) => node.type === "button")[0].props.onClick();
+  assert.equal(fixture.navigations.at(-1), "/notebooks", "the saved sketches menu key is preserved while its public URL becomes notebooks");
   const toolbar = fixture.toolbar({ section: "jewelry" });
   assert.equal(nodes(toolbar, (node) => node.props?.className === "section-navigation-title").map(text).join(), "Fashion and Jewelry");
   assert.equal(nodes(toolbar, (node) => node.type === "img").length, 0, "a menu-title PNG never replaces the toolbar's typed text");

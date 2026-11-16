@@ -15,6 +15,38 @@ import "./Artworks.css";
 const ModelPreview = lazy(() => import("@/components/artworks/ArtworkModelPreview"));
 const spring = { type: "spring" as const, stiffness: 190, damping: 25, mass: 0.85 };
 
+function chronologicalArtworks(items: readonly ArtworkItem[]): ArtworkItem[] {
+  return items.map((item, order) => ({ item, order })).sort((first, second) => {
+    const firstYear = Number.isFinite(first.item.year) ? first.item.year : 0;
+    const secondYear = Number.isFinite(second.item.year) ? second.item.year : 0;
+    return secondYear - firstYear || first.order - second.order;
+  }).map(({ item }) => item);
+}
+
+function galleryRowGap(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(240, Math.max(16, value)) : 96;
+}
+
+function gridMediaTop(slotHeight: number, mediaHeight: number, aligned: boolean): number {
+  return (slotHeight - mediaHeight) * (aligned ? 1 : .5);
+}
+
+function alignArtworkCaptionRows(grid: HTMLElement): void {
+  // Measure layout boxes, never Framer's projected/scaled client rectangles.
+  // Reserve space AFTER a short title rather than giving the button a fixed
+  // height: its text baseline stays at the top, just like a wrapped title.
+  const cards = [...grid.querySelectorAll<HTMLElement>(".artwork-card")].flatMap((card) => {
+    const title = card.querySelector<HTMLElement>(".artwork-title-strip");
+    return title ? [{ card, row: card.offsetTop, height: title.offsetHeight }] : [];
+  });
+  const tallest = new Map<number, number>();
+  cards.forEach(({ row, height }) => tallest.set(row, Math.max(tallest.get(row) ?? 0, height)));
+  cards.forEach(({ card, row, height }) => {
+    const reserve = `${Math.max(0, (tallest.get(row) ?? height) - height)}px`;
+    if (card.style.getPropertyValue("--artwork-title-reserve") !== reserve) card.style.setProperty("--artwork-title-reserve", reserve);
+  });
+}
+
 function useDocumentVisible() {
   const [visible, setVisible] = useState(() => !document.hidden);
   useEffect(() => {
@@ -49,9 +81,10 @@ function Preview({ item, model, active, animate, documentVisible, priority, deta
   return image ? <img src={image} alt={detail ? item.description || item.title : ""} loading={priority ? "eager" : "lazy"} {...{ fetchpriority: priority ? "high" : "auto" }} decoding="async" draggable={false} onLoad={(event) => onDimensions(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /> : <span className="artwork-preview-status">3D</span>;
 }
 
-function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, priority, selected, centered, detailOpen, editing, onSelect, onClose, onModelReady, onRemoveDraft }: {
+function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, priority, selected, centered, detailOpen, editing, alignGrid = false, onSelect, onClose, onModelReady, onRemoveDraft }: {
   item: ArtworkItem; model?: ThreeDModel; scrollRoot: HTMLDivElement | null; reducedMotion: boolean;
   documentVisible: boolean; priority: boolean;
+  alignGrid?: boolean;
   order: number; selected: boolean; centered: boolean; detailOpen: boolean; editing: boolean; onSelect: () => void; onClose: () => void; onModelReady: () => void; onRemoveDraft: () => void;
 }) {
   const ref = useRef<HTMLElement>(null);
@@ -102,7 +135,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
   // can therefore use one uniform scale instead of stretching the bitmap.
   const mediaFrame = selected && centered
     ? { width: detailWidth, height: detailWidth / mediaRatio, left: (frame.viewportWidth - detailWidth) / 2, top: frame.viewportHeight * (mobile ? .14 : .12) + (detailHeight - detailWidth / mediaRatio) / 2 }
-    : { width: gridWidth, height: gridWidth / mediaRatio, left: frame.width - gridWidth, top: (frame.height - gridWidth / mediaRatio) / 2 };
+    : { width: gridWidth, height: gridWidth / mediaRatio, left: frame.width - gridWidth, top: gridMediaTop(frame.height, gridWidth / mediaRatio, alignGrid) };
   useEffect(() => {
     if (!ref.current || !scrollRoot) return;
     const observer = new IntersectionObserver(([entry]) => setActive(entry.isIntersecting), { root: scrollRoot, rootMargin: "80px" });
@@ -195,12 +228,29 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
   const restored = useRef(false);
   const closeTimer = useRef<number | null>(null);
   const openingTimer = useRef<number | null>(null);
+  const grid = useRef<HTMLElement>(null);
   const section = featuredOnly ? "featured" : jewelryOnly ? "jewelry" : fashionOnly ? "fashion" : "artworks";
+  const alignedGrid = !featuredOnly;
+  const spacingSection = jewelryOnly || fashionOnly ? "jewelry" : "artworks";
+  const rowGap = galleryRowGap((inline.editing ? inline.draft : settings).gallery_row_gap?.[spacingSection]);
   const returnPath = featuredOnly ? "/featured-in" : jewelryOnly ? "/fashionandjewelry" : fashionOnly ? "/fashion" : "/artworks";
   const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : jewelryOnly ? "Fashion and Jewelry" : fashionOnly ? "FASHION" : "ARTWORKS");
   const scrollKey = `studierzimmer:artwork-scroll:${jewelryOnly ? "/jewelry" : returnPath}`;
-  const visibleItems = useMemo(() => [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in && !item.is_jewelry), [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
+  const visibleItems = useMemo(() => {
+    const matching = [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in && !item.is_jewelry);
+    return featuredOnly ? matching : chronologicalArtworks(matching);
+  }, [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
   const modelIds = useMemo(() => [...new Set(visibleItems.flatMap((item) => item.kind === "model" && item.model_id ? [item.model_id] : []))], [visibleItems]);
+  useLayoutEffect(() => {
+    const element = grid.current;
+    if (!element || !alignedGrid || inline.editing || selectedId) return;
+    const align = () => alignArtworkCaptionRows(element);
+    align();
+    const observer = new ResizeObserver(align);
+    observer.observe(element);
+    element.querySelectorAll(".artwork-title-strip").forEach((title) => observer.observe(title));
+    return () => observer.disconnect();
+  }, [alignedGrid, inline.editing, selectedId, visibleItems]);
   useEffect(() => {
     if (!modelIds.length) { setModels([]); return; }
     let active = true;
@@ -253,13 +303,18 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
     <div className={`artworks-page${selectedId ? " has-detail" : ""}${settling ? " is-settling" : ""}`}>
       <SectionNavigation section={section} title={sectionTitle}>{selectedId && <button className="artwork-grid-return" onClick={close}>back</button>}</SectionNavigation>
       <SiteEditControl section="menu" />
-      <div ref={setScrollRoot} className={`artworks-scroll${selectedId ? " is-detail-open" : ""}`}>
+      <div ref={setScrollRoot} className={`artworks-scroll${selectedId ? " is-detail-open" : ""}${inline.editing && alignedGrid ? " is-layout-editing" : ""}`}>
         {loading && <p key={`${section}:loading`} className="artworks-empty artwork-status-blossom" data-blossom role="status">...</p>}
         {error && <div key={`${section}:error`} className="artworks-empty artwork-status-blossom" data-blossom role="alert"><p>{error}</p><button type="button" onClick={() => void reload()}>Riprova</button></div>}
         {!loading && !error && visibleItems.length === 0 && <p key={`${section}:empty`} className="artworks-empty artwork-status-blossom" data-blossom>{featuredOnly ? "Articoli e apparizioni, prossimamente." : jewelryOnly ? `Nessun contenuto ${sectionTitle} pubblicato.` : fashionOnly ? "Nessun lavoro Fashion pubblicato." : "Nessun artwork pubblicato."}</p>}
         {centered && <div className="artwork-detail-background" onClick={close} aria-hidden="true" />}
-        <main className="artworks-grid" aria-label={sectionTitle}>
-          {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
+        {inline.editing && alignedGrid && <div className="artworks-layout-controls" data-inline-edit-ui>
+          <label htmlFor={`gallery-row-gap-${section}`}>spaziatura righe</label>
+          <input id={`gallery-row-gap-${section}`} type="range" min={16} max={240} step={1} value={rowGap} disabled={inline.saving} aria-valuetext={`${rowGap} pixel`} onChange={(event) => inline.update({ gallery_row_gap: { ...inline.draft.gallery_row_gap, [spacingSection]: galleryRowGap(Number(event.currentTarget.value)) } })} />
+          <output htmlFor={`gallery-row-gap-${section}`}>{rowGap} px</output>
+        </div>}
+        <main ref={grid} className={`artworks-grid${alignedGrid ? " is-aligned" : ""}`} style={alignedGrid ? { "--artwork-row-gap": `${rowGap}px` } as CSSProperties : undefined} aria-label={sectionTitle}>
+          {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} alignGrid={alignedGrid} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
           {inline.editing && <button className="artwork-add-inline artwork-status-blossom" data-blossom onClick={() => setNewItems((current) => [...current, { id: crypto.randomUUID(), title: "", year: new Date().getFullYear(), kind: "image", media_url: "", poster_url: null, model_id: null, is_fashion: fashionOnly, is_jewelry: jewelryOnly, is_featured_in: featuredOnly, is_published: false, sort_order: (items.length + current.length) * 10, description: "", external_url: null }])}>+ aggiungi {featuredOnly ? "articolo" : "opera"}</button>}
         </main>
       </div>
