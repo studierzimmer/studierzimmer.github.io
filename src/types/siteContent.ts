@@ -42,6 +42,7 @@ export interface SiteSettings {
   model_categories: Record<string, ModelCategory>;
   model_view_modes?: Record<string, ModelViewMode[]>;
   gallery_row_gap?: Partial<Record<"artworks" | "jewelry", number>>;
+  gallery_item_order?: Partial<Record<"artworks" | "jewelry", string[]>>;
   ocean_title?: string;
   ocean_subtitle?: string;
   ocean_about?: string;

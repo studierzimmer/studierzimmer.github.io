@@ -21,6 +21,7 @@ const labels = compile(read("src/types/oceanText.ts"));
 const environment = compile(read("src/types/oceanEnvironment.ts"));
 const menu = compile(read("src/lib/siteMenu.ts"));
 const modelViews = compile(read("src/lib/modelViewModes.ts"));
+const artworkOrder = compile(read("src/lib/artworkOrder.ts"));
 const keys = ["exit", "start", "about", "figure", "music", "loadingFigures", "figuresUnavailable"];
 assert.deepEqual(Object.keys(labels.DEFAULT_OCEAN_LABELS), keys);
 assert.equal(labels.DEFAULT_OCEAN_LABELS.exit, "Exit");
@@ -84,15 +85,17 @@ function repository(mode) {
   const indexedDB = { open() { const request = {}; queueMicrotask(() => { request.result = database; request.onsuccess?.(); }); return request; } };
   const source = read("src/services/siteContentRepository.ts").replaceAll("import.meta.env.VITE_SITE_CONTENT_MODE", JSON.stringify(mode)).replaceAll("import.meta.env.DEV", "false");
   const api = compile(`${source}\nexport { normalizeSettings };`, {
-    "@/lib/supabase": { supabase }, "@/lib/siteMenu": menu, "@/lib/modelViewModes": modelViews, "@/types/oceanEnvironment": environment, "@/types/oceanText": labels,
+    "@/lib/supabase": { supabase }, "@/lib/siteMenu": menu, "@/lib/modelViewModes": modelViews, "@/lib/artworkOrder": artworkOrder, "@/types/oceanEnvironment": environment, "@/types/oceanText": labels,
   }, { indexedDB, queueMicrotask, window: { location: { hostname: "127.0.0.1", protocol: "http:" }, setTimeout, clearTimeout, dispatchEvent: (event) => events.push(event) }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } } });
   return { api, state, calls, records, events };
 }
 for (const mode of ["local", "remote"]) {
   const f = repository(mode), api = f.api;
-  const original = { ...api.DEFAULT_SITE_SETTINGS, bio_text: "BIO da conservare", ocean_title: "", ocean_subtitle: "", ocean_about: "", ocean_labels: custom, gallery_row_gap: { artworks: 128, jewelry: 48 }, model_view_modes: { "original-model-id": ["arctic", "pen"] } };
+  const original = { ...api.DEFAULT_SITE_SETTINGS, bio_text: "BIO da conservare", ocean_title: "", ocean_subtitle: "", ocean_about: "", ocean_labels: custom, gallery_row_gap: { artworks: 128, jewelry: 48 }, gallery_item_order: { artworks: ["same-year-second", "same-year-first", "hidden-original-id"], jewelry: ["original-jewelry-id"] }, model_view_modes: { "original-model-id": ["arctic", "pen"] } };
   await api.saveSiteSettings(original);
   const reloaded = await api.getSiteSettings();
+  assert.deepEqual(plain(reloaded.gallery_item_order), original.gallery_item_order, "manual per-gallery ordering persists in the existing settings JSON, not in product rows");
+  assert.ok(f.calls.filter((call) => call[0] === "from").every((call) => call[1] === "site_settings"), "saving presentation order never writes artwork, book, model or storage records");
   assert.deepEqual(plain(reloaded.ocean_labels), custom); assert.equal(reloaded.ocean_title, ""); assert.equal(reloaded.ocean_subtitle, ""); assert.equal(reloaded.ocean_about, "");
   assert.equal(reloaded.bio_text, "BIO da conservare");
   assert.deepEqual(plain(reloaded.menu_items), plain(original.menu_items), "new labels never reset other menus/content");

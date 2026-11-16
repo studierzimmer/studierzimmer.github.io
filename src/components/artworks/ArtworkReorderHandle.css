@@ -1,0 +1,11 @@
+.artwork-reorder-handle { display:inline-flex; position:relative; flex:0 0 44px; align-items:center; justify-content:center; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border:1px solid transparent; border-radius:0; background:transparent; color:inherit; cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; transform:translate3d(var(--artwork-reorder-x, 0px),var(--artwork-reorder-y, 0px),0); }
+.artwork-reorder-handle:hover, .artwork-reorder-handle:focus-visible { border-color:currentColor; }
+.artwork-reorder-handle:focus-visible { outline:1px solid currentColor; outline-offset:3px; }
+.artwork-reorder-handle.is-dragging { z-index:5; cursor:grabbing; border-color:currentColor; scale:1.08; }
+.artwork-reorder-handle:disabled { cursor:default; color:#888; }
+.artwork-card.is-artwork-reordering { outline:1px dotted currentColor; outline-offset:6px; }
+.artwork-card.is-artwork-reorder-target { outline:2px solid currentColor; outline-offset:6px; }
+.artwork-card.is-artwork-reorder-invalid { outline:1px dashed #9c4e36; outline-offset:6px; }
+.artwork-reorder-help { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.artwork-reorder-feedback { display:block; font-size:11px; line-height:1.5; color:inherit; }
+.artwork-reorder-feedback:empty { display:none; }

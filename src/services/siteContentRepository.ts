@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { orderedMenuDefaults } from "@/lib/siteMenu";
 import { normalizeModelViewModes } from "@/lib/modelViewModes";
+import { normalizeGalleryItemOrder } from "@/lib/artworkOrder";
 import { normalizeOceanEnvironment } from "@/types/oceanEnvironment";
 import { normalizeOceanLabels } from "@/types/oceanText";
 import type {
@@ -64,6 +65,7 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
   model_categories: {},
   model_view_modes: {},
   gallery_row_gap: {},
+  gallery_item_order: {},
   ocean_title: "Studierzimmer-Ozean",
   ocean_subtitle: "studierzimmer.ch",
   ocean_about: "Un erker nel mio Studier Zimmer. Uno spazio da esplorare, tra oggetti, disegni e mare.",
@@ -224,6 +226,7 @@ function normalizeSettings(value: Partial<SiteSettings> | null | undefined): Sit
     model_categories: categories,
     model_view_modes: normalizeModelViewModes(input.model_view_modes),
     gallery_row_gap: galleryRowGap,
+    gallery_item_order: normalizeGalleryItemOrder(input.gallery_item_order),
     ocean_title: typeof input.ocean_title === "string" ? input.ocean_title : defaults.ocean_title,
     ocean_subtitle: typeof input.ocean_subtitle === "string" ? input.ocean_subtitle : defaults.ocean_subtitle,
     ocean_about: typeof input.ocean_about === "string" ? input.ocean_about : defaults.ocean_about,

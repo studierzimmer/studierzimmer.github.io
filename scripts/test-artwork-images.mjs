@@ -16,6 +16,7 @@ function compile(file, require = (id) => { throw new Error(`Unexpected dependenc
 }
 
 const imageHelpers = compile("../src/lib/artworkImages.ts");
+const orderHelpers = compile("../src/lib/artworkOrder.ts");
 const modelViewModes = compile("../src/lib/modelViewModes.ts");
 class FileFixture extends Blob {
   constructor(chunks, name, options) { super(chunks, options); this.name = name; }
@@ -98,6 +99,7 @@ function repository({ mode = "local", memory = memoryDatabase(), rows = [], resp
   const api = compile("../src/services/siteContentRepository.ts", (id) => {
     if (id === "@/lib/supabase") return { supabase };
     if (id === "@/lib/artworkImages") return imageHelpers;
+    if (id === "@/lib/artworkOrder") return orderHelpers;
     if (id === "@/lib/modelViewModes") return modelViewModes;
     if (id === "@/lib/siteMenu") return { orderedMenuDefaults: (defaults) => defaults };
     if (id === "@/types/oceanEnvironment") return { normalizeOceanEnvironment: (value) => value ?? {} };
@@ -675,6 +677,7 @@ function galleryFixture({ editing = false } = {}) {
     if (id === "@/hooks/useSiteContent") return { useArtworks: () => ({ items, loading: false, error: null, reload() {} }), useSiteContent: () => ({ settings }) };
     if (id === "@/components/SiteEditControl") return { default: "SiteEditControl", useInlineSiteEditing: () => inline };
     if (id === "@/lib/artworkImages") return imageHelpers;
+    if (id === "@/lib/artworkOrder") return orderHelpers;
     if (id === "@/services/siteContentRepository") return { saveArtworkItem() { throw new Error("Public gallery contract tests cannot save"); }, uploadArtworkAsset() { throw new Error("Public gallery contract tests cannot upload"); } };
     if (id.startsWith("@/components/")) return { default: id };
     if (id.endsWith(".css")) return {};

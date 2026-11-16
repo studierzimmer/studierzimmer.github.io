@@ -13,12 +13,14 @@ const helpers = compile(fs.readFileSync(new URL("../src/lib/siteMenu.ts", import
 const ocean = compile(fs.readFileSync(new URL("../src/types/oceanEnvironment.ts", import.meta.url), "utf8"));
 const oceanText = compile(fs.readFileSync(new URL("../src/types/oceanText.ts", import.meta.url), "utf8"));
 const modelViews = compile(fs.readFileSync(new URL("../src/lib/modelViewModes.ts", import.meta.url), "utf8"));
+const artworkOrder = compile(fs.readFileSync(new URL("../src/lib/artworkOrder.ts", import.meta.url), "utf8"));
 let repository = fs.readFileSync(new URL("../src/services/siteContentRepository.ts", import.meta.url), "utf8");
 repository = repository.replaceAll("import.meta.env.VITE_SITE_CONTENT_MODE", '"local"').replaceAll("import.meta.env.DEV", "true");
 const api = compile(`${repository}\nexport { normalizeSettings };`, (id) => {
   if (id === "@/lib/supabase") return { supabase: {} };
   if (id === "@/lib/siteMenu") return helpers;
   if (id === "@/lib/modelViewModes") return modelViews;
+  if (id === "@/lib/artworkOrder") return artworkOrder;
   if (id === "@/types/oceanEnvironment") return ocean;
   if (id === "@/types/oceanText") return oceanText;
   throw new Error(`Unexpected dependency ${id}`);
@@ -85,6 +87,11 @@ assert.deepEqual(plain(layoutSettings.model_view_modes), { "original-watch-id": 
 assert.deepEqual(plain(api.normalizeSettings(layoutSettings)), plain(layoutSettings), "row spacing and per-model view choices survive normalization without touching the catalogue or other saved settings");
 assert.deepEqual(plain(api.normalizeSettings({ gallery_row_gap: { artworks: -100, jewelry: 500 } }).gallery_row_gap), { artworks: 16, jewelry: 240 }, "row spacing always leaves a positive non-overlapping gap");
 assert.deepEqual(plain(api.normalizeSettings({ gallery_row_gap: { artworks: Number.NaN, jewelry: "64" } }).gallery_row_gap), {}, "invalid layout values preserve responsive defaults");
+const manualOrderSettings = api.normalizeSettings({ ...layoutSettings, gallery_item_order: { artworks: ["second", "first", "hidden-original-id"], jewelry: ["jewel-original-id"] } });
+assert.deepEqual(plain(api.normalizeSettings(manualOrderSettings)), plain(manualOrderSettings), "manual presentation order survives normalization/save/reload alongside spacing and model styles");
+assert.deepEqual(plain(manualOrderSettings.menu_items), plain(layoutSettings.menu_items));
+assert.deepEqual(plain(manualOrderSettings.gallery_row_gap), plain(layoutSettings.gallery_row_gap));
+assert.deepEqual(plain(manualOrderSettings.model_view_modes), plain(layoutSettings.model_view_modes));
 
 function nodes(node, predicate) {
   const found = [];

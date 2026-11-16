@@ -8,19 +8,17 @@ import { saveArtworkItem, uploadArtworkAsset } from "@/services/siteContentRepos
 import type { ArtworkItem } from "@/types/siteContent";
 import type { ThreeDModel } from "@/types/threeDModels";
 import { artworkImageSources } from "@/lib/artworkImages";
+import { orderGalleryArtworks, reorderGalleryArtwork } from "@/lib/artworkOrder";
 import ArtworkImageCarousel from "@/components/artworks/ArtworkImageCarousel";
 import ArtworkImageFields from "@/components/artworks/ArtworkImageFields";
+import ArtworkReorderHandle from "@/components/artworks/ArtworkReorderHandle";
 import "./Artworks.css";
 
 const ModelPreview = lazy(() => import("@/components/artworks/ArtworkModelPreview"));
 const spring = { type: "spring" as const, stiffness: 190, damping: 25, mass: 0.85 };
 
-function chronologicalArtworks(items: readonly ArtworkItem[]): ArtworkItem[] {
-  return items.map((item, order) => ({ item, order })).sort((first, second) => {
-    const firstYear = Number.isFinite(first.item.year) ? first.item.year : 0;
-    const secondYear = Number.isFinite(second.item.year) ? second.item.year : 0;
-    return secondYear - firstYear || first.order - second.order;
-  }).map(({ item }) => item);
+function chronologicalArtworks(items: readonly ArtworkItem[], order?: readonly string[]): ArtworkItem[] {
+  return orderGalleryArtworks(items, order);
 }
 
 function galleryRowGap(value: unknown): number {
@@ -81,10 +79,11 @@ function Preview({ item, model, active, animate, documentVisible, priority, deta
   return image ? <img src={image} alt={detail ? item.description || item.title : ""} loading={priority ? "eager" : "lazy"} {...{ fetchpriority: priority ? "high" : "auto" }} decoding="async" draggable={false} onLoad={(event) => onDimensions(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} /> : <span className="artwork-preview-status">3D</span>;
 }
 
-function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, priority, selected, centered, detailOpen, editing, alignGrid = false, onSelect, onClose, onModelReady, onRemoveDraft }: {
+function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, priority, selected, centered, detailOpen, editing, alignGrid = false, reorderDisabled = false, onReorder, onSelect, onClose, onModelReady, onRemoveDraft }: {
   item: ArtworkItem; model?: ThreeDModel; scrollRoot: HTMLDivElement | null; reducedMotion: boolean;
   documentVisible: boolean; priority: boolean;
   alignGrid?: boolean;
+  reorderDisabled?: boolean; onReorder?: (id: string, targetId: string) => void;
   order: number; selected: boolean; centered: boolean; detailOpen: boolean; editing: boolean; onSelect: () => void; onClose: () => void; onModelReady: () => void; onRemoveDraft: () => void;
 }) {
   const ref = useRef<HTMLElement>(null);
@@ -169,7 +168,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
   }, [editing, draft, item, registerFields, commit, saving]);
   const activate = () => { if (!editing && !(item.kind === "video" && selected)) { if (selected) onClose(); else onSelect(); } };
 
-  return <article className={`artwork-card${selected ? " is-selected" : ""}${detailOpen && !selected ? " is-away" : ""}`} ref={ref} data-artwork-id={item.id} data-artwork-kind={draft.kind} data-year={draft.year} style={{ "--artwork-entry-delay": `${Math.min(order, 8) * 65}ms`, "--artwork-copy-width": `${frame.width}px` } as CSSProperties}>
+  return <motion.article layout={editing && onReorder ? "position" : false} transition={{ layout: reducedMotion ? { duration: 0 } : spring }} className={`artwork-card${selected ? " is-selected" : ""}${detailOpen && !selected ? " is-away" : ""}`} ref={ref} data-artwork-id={item.id} data-artwork-kind={draft.kind} data-year={draft.year} style={{ "--artwork-entry-delay": `${Math.min(order, 8) * 65}ms`, "--artwork-copy-width": `${frame.width}px` } as CSSProperties}>
     <div className="artwork-preview-slot" ref={slot}>
       {/* A single persistent media node moves between its two measured layouts.
           No duplicate image, shared-layout crossfade, or opacity animation. */}
@@ -185,6 +184,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
       </motion.div>
     </div>
     {editing ? <div className="artwork-inline-fields" data-inline-editor>
+      {onReorder && <div className="artwork-reorder-row"><ArtworkReorderHandle id={item.id} year={draft.year} label={draft.title || "Opera senza titolo"} disabled={saving || reorderDisabled || draft.year !== item.year} onMove={onReorder} /><span>{draft.year !== item.year ? "salva l’anno prima di riordinare" : `ordine · ${draft.year}`}</span></div>}
       <input aria-label="Titolo opera" placeholder="Titolo" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
       <textarea aria-label="Descrizione opera" placeholder="Descrizione" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={3} />
       <label>Anno<input type="number" aria-label="Anno opera" value={draft.year} min={1} max={9999} onChange={(event) => setDraft({ ...draft, year: Number(event.target.value) })} /></label>
@@ -204,7 +204,7 @@ function Card({ item, order, model, scrollRoot, reducedMotion, documentVisible, 
       {draft.description && <motion.p layout="position" transition={{ layout: reducedMotion ? { duration: 0 } : spring }} data-blossom="description" className="artwork-card-description">{draft.description}</motion.p>}
       {draft.external_url && <motion.a layout="position" transition={{ layout: reducedMotion ? { duration: 0 } : spring }} data-blossom="link" className="artwork-article-link" tabIndex={detailOpen && !selected ? -1 : undefined} href={draft.external_url} target="_blank" rel="noopener noreferrer">Leggi l’articolo ↗</motion.a>}
     </div></div>}
-  </article>;
+  </motion.article>;
 }
 
 export const ArtworkCard = Card;
@@ -224,6 +224,7 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
   const [activeYear, setActiveYear] = useState<number | string | null>(null);
   const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
   const [priorityImageId, setPriorityImageId] = useState<string | null>(null);
+  const [orderFeedback, setOrderFeedback] = useState("");
   const modelOpening = useRef(false);
   const restored = useRef(false);
   const closeTimer = useRef<number | null>(null);
@@ -232,14 +233,33 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
   const section = featuredOnly ? "featured" : jewelryOnly ? "jewelry" : fashionOnly ? "fashion" : "artworks";
   const alignedGrid = !featuredOnly;
   const spacingSection = jewelryOnly || fashionOnly ? "jewelry" : "artworks";
-  const rowGap = galleryRowGap((inline.editing ? inline.draft : settings).gallery_row_gap?.[spacingSection]);
+  const presentation = inline.editing ? inline.draft : settings;
+  const rowGap = galleryRowGap(presentation.gallery_row_gap?.[spacingSection]);
+  const manualOrder = presentation.gallery_item_order?.[spacingSection];
   const returnPath = featuredOnly ? "/featured-in" : jewelryOnly ? "/fashionandjewelry" : fashionOnly ? "/fashion" : "/artworks";
   const sectionTitle = (inline.editing ? inline.draft : settings).menu_items.find((item) => item.id === section)?.label || (featuredOnly ? "FEATURED IN" : jewelryOnly ? "Fashion and Jewelry" : fashionOnly ? "FASHION" : "ARTWORKS");
   const scrollKey = `studierzimmer:artwork-scroll:${jewelryOnly ? "/jewelry" : returnPath}`;
   const visibleItems = useMemo(() => {
     const matching = [...items, ...newItems.filter((draft) => !items.some((item) => item.id === draft.id))].filter((item) => featuredOnly ? item.is_featured_in : jewelryOnly ? item.is_jewelry : fashionOnly ? item.is_fashion : !item.is_featured_in && !item.is_jewelry);
-    return featuredOnly ? matching : chronologicalArtworks(matching);
-  }, [items, newItems, fashionOnly, featuredOnly, jewelryOnly]);
+    return featuredOnly ? matching : chronologicalArtworks(matching, manualOrder);
+  }, [items, newItems, fashionOnly, featuredOnly, jewelryOnly, manualOrder]);
+  const reorder = useCallback((id: string, targetId: string) => {
+    if (!inline.editing || inline.saving || !alignedGrid) return;
+    const currentCards = grid.current ? [...grid.current.querySelectorAll<HTMLElement>(".artwork-card")] : [];
+    const pendingYear = [id, targetId].some((currentId) => {
+      const item = visibleItems.find((candidate) => candidate.id === currentId);
+      const card = currentCards.find((candidate) => candidate.dataset.artworkId === currentId);
+      return item && card && Number(card.dataset.year) !== item.year;
+    });
+    if (pendingYear) { setOrderFeedback("Salva prima le modifiche all’anno, poi riordina le opere."); return; }
+    const result = reorderGalleryArtwork(visibleItems, manualOrder, id, targetId);
+    if (result.reason === "different-year") { setOrderFeedback("Puoi riordinare solo opere dello stesso anno. Gli anni restano dal più recente al meno recente."); return; }
+    if (result.reason === "missing") { setOrderFeedback("L’opera non è più disponibile. Riprova."); return; }
+    if (!result.changed) return;
+    inline.update({ gallery_item_order: { ...inline.draft.gallery_item_order, [spacingSection]: result.order } });
+    setOrderFeedback("Ordine aggiornato nella bozza. Premi salva per confermare oppure annulla per ripristinarlo.");
+  }, [inline, alignedGrid, visibleItems, manualOrder, spacingSection]);
+  useEffect(() => { setOrderFeedback(""); }, [inline.editing, section]);
   const modelIds = useMemo(() => [...new Set(visibleItems.flatMap((item) => item.kind === "model" && item.model_id ? [item.model_id] : []))], [visibleItems]);
   useLayoutEffect(() => {
     const element = grid.current;
@@ -312,9 +332,10 @@ function GalleryView({ fashionOnly = false, featuredOnly = false, jewelryOnly = 
           <label htmlFor={`gallery-row-gap-${section}`}>spaziatura righe</label>
           <input id={`gallery-row-gap-${section}`} type="range" min={16} max={240} step={1} value={rowGap} disabled={inline.saving} aria-valuetext={`${rowGap} pixel`} onChange={(event) => inline.update({ gallery_row_gap: { ...inline.draft.gallery_row_gap, [spacingSection]: galleryRowGap(Number(event.currentTarget.value)) } })} />
           <output htmlFor={`gallery-row-gap-${section}`}>{rowGap} px</output>
+          <p className="artworks-order-feedback" role="status">{orderFeedback || "Trascina la maniglia per riordinare opere dello stesso anno, oppure usa i tasti freccia sulla maniglia."}</p>
         </div>}
         <main ref={grid} className={`artworks-grid${alignedGrid ? " is-aligned" : ""}`} style={alignedGrid ? { "--artwork-row-gap": `${rowGap}px` } as CSSProperties : undefined} aria-label={sectionTitle}>
-          {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} alignGrid={alignedGrid} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
+          {visibleItems.map((item, index) => <ArtworkCard key={item.id} item={item} order={index} model={models.find((model) => model.id === item.model_id)} scrollRoot={scrollRoot} reducedMotion={reducedMotion} documentVisible={documentVisible} priority={priorityImageId === item.id} selected={selectedId === item.id} centered={centered} detailOpen={Boolean(selectedId)} editing={inline.editing} alignGrid={alignedGrid} reorderDisabled={inline.saving} onReorder={inline.editing && alignedGrid ? reorder : undefined} onSelect={() => { if (selectedId) return; modelOpening.current = false; setSelectedId(item.id); openingTimer.current = window.setTimeout(() => setCentered(true), reducedMotion ? 0 : 450); }} onClose={close} onModelReady={() => { if (modelOpening.current || !item.model_id) return; modelOpening.current = true; navigate(`/3d?model=${encodeURIComponent(item.model_id)}`, { state: { returnTo: returnPath } }); }} onRemoveDraft={() => setNewItems((current) => current.filter((draft) => draft.id !== item.id))} />)}
           {inline.editing && <button className="artwork-add-inline artwork-status-blossom" data-blossom onClick={() => setNewItems((current) => [...current, { id: crypto.randomUUID(), title: "", year: new Date().getFullYear(), kind: "image", media_url: "", poster_url: null, model_id: null, is_fashion: fashionOnly, is_jewelry: jewelryOnly, is_featured_in: featuredOnly, is_published: false, sort_order: (items.length + current.length) * 10, description: "", external_url: null }])}>+ aggiungi {featuredOnly ? "articolo" : "opera"}</button>}
         </main>
       </div>

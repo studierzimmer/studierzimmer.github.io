@@ -51,6 +51,9 @@
 .artworks-layout-controls label { flex: 0 0 auto; }
 .artworks-layout-controls input { flex: 1 1 160px; min-width: 100px; max-width: 280px; min-height: 44px; accent-color: #555; cursor: ew-resize; }
 .artworks-layout-controls output { font-variant-numeric: tabular-nums; min-width: 42px; color: #777; }
+.artworks-order-feedback { flex: 1 0 100%; max-width: 65ch; margin: 0; color: #777; line-height: 1.6; }
+.artwork-reorder-row { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #777; }
+.artwork-reorder-row > span { font-size: 11px; }
 .artworks-scroll.is-layout-editing .artworks-grid { padding-top: 32px; }
 @keyframes artwork-blossom { 0% { scale:0; } 48% { scale:1.075; } 66% { scale:.97; } 80% { scale:1.018; } 91% { scale:.994; } 100% { scale:1; } }
 @media (max-width: 1000px) { .artworks-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 64px 42px; } .artwork-card:nth-child(3n + 2), .artwork-card:nth-child(3n) { margin-top: 0; } .artwork-card:nth-child(even) { margin-top: 85px; } }
