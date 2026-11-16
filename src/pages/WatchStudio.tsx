@@ -1971,15 +1971,6 @@ export default function WatchStudio({
           infoOpen ? "is-open" : ""
         }`}
       >
-        <button
-          type="button"
-          onClick={() => setInfoOpen(false)}
-          className="absolute right-14 top-4 z-10 border-0 bg-transparent px-2 py-1 text-[16px] transition-transform hover:scale-110 sm:right-16"
-          aria-label="Close model information"
-        >
-          chiudi
-        </button>
-
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 py-20 text-center sm:px-12">
           <div
             className="watch-info-piece w-full"

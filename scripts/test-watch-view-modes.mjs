@@ -38,6 +38,23 @@ function inspect(node) {
   ts.forEachChild(node, inspect);
 }
 inspect(watchAST);
+const navigationSource = read("src/components/navigation/SectionNavigation.tsx");
+const navigationAST = ts.createSourceFile("SectionNavigation.tsx", navigationSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+let infoTrigger, infoPanel;
+function findInfoUI(node) {
+  if (ts.isJsxElement(node)) {
+    const attributes = node.openingElement.attributes.properties;
+    if (node.openingElement.tagName.getText(node.getSourceFile()) === "button" && attributes.some((attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText() === "data-watch-info-toggle")) infoTrigger = node;
+    if (node.openingElement.tagName.getText(node.getSourceFile()) === "aside" && attributes.some((attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText() === "id" && attribute.initializer?.text === "watch-model-info")) infoPanel = node;
+  }
+  ts.forEachChild(node, findInfoUI);
+}
+findInfoUI(navigationAST); findInfoUI(watchAST);
+assert.ok(infoTrigger, "Horlogerie keeps the marked, accessible shared navigation trigger");
+assert.equal(infoTrigger.children.filter(ts.isJsxText).map((child) => child.text.trim()).join(""), "Info", "the visible trigger uses the requested capital I");
+assert.ok(infoPanel);
+assert.doesNotMatch(infoPanel.getText(watchAST), /Close model information|>\s*chiudi\s*</i, "the sliding info panel has no separate visible close control");
+assert.doesNotMatch(infoPanel.getText(watchAST), /onClick=\{[^}]*setInfoOpen\(false\)/, "closing remains on the shared Info toggle or outside interaction, not an extra panel button");
 const boundaryNames = ["RENDER_MODES", "allowedViewModes", "availableRenderModes", "sceneMode"];
 const boundary = boundaryNames.map((name) => `const ${name}=${declarations.get(name).getText(watchAST)};`).join("\n");
 for (const [allowed, previous, expected] of [
@@ -127,4 +144,4 @@ assert.equal(saves.length, 1, "fallback defaults on read failure can never overw
 assert.equal(metadata.length, 1, "failed prerequisite read aborts before any model mutation");
 assert.deepEqual(plain(values.get("editViewModes")), ["arctic", "pen"], "failed save retains the staged owner choices for retry");
 assert.match(values.get("error"), /fixture unavailable/);
-console.log("PASS: legacy/default + minimum-one model views, immediate public mode filtering/PBR mapping, staged owner save with fresh JSON merge and original assets preserved; left-only info slide, repeat/outside toggle and listener cleanup; List label. Mocked only, no external writes.");
+console.log("PASS: legacy/default + minimum-one model views, immediate public mode filtering/PBR mapping, staged owner save with fresh JSON merge and original assets preserved; left-only info slide, capitalized Info without extra close control, repeat/outside toggle and listener cleanup; List label. Mocked only, no external writes.");
