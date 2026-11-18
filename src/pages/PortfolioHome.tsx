@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LoadingLogo from "@/components/LoadingLogo";
 import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditControl";
-import { useSiteContent } from "@/hooks/useSiteContent";
+import { usePublishedFeaturedAvailability, useSiteContent } from "@/hooks/useSiteContent";
 import type { MenuKey } from "@/types/siteContent";
 import { BOOK_INTRO_RETURN_KEY } from "@/components/books/bookSession";
 import { uploadSiteAsset } from "@/services/siteContentRepository";
@@ -31,7 +31,9 @@ export default function PortfolioHome() {
   }, []);
 
   const menuItems = activeMenuItems(settings.menu_items);
-  const items = menuItems.filter((item) => item.visible);
+  const checkFeatured = !editing && menuItems.some((item) => item.id === "featured" && item.visible);
+  const featuredAvailable = usePublishedFeaturedAvailability(checkFeatured);
+  const items = menuItems.filter((item) => item.visible && (editing || item.id !== "featured" || featuredAvailable !== false));
   const openSection = (key: MenuKey) => {
     if (editing) return;
     setSelectedMenu(key);
@@ -46,6 +48,10 @@ export default function PortfolioHome() {
     if (loading) return <div className="portfolio-page" aria-label="Caricamento" />;
     return <LoadingLogo logoUrl={settings.splash_logo_url} onComplete={completeSplash} autoCompleteAfter={1900} showProgress={false} />;
   }
+
+  // Resolve initial presence before mounting the menu, without delaying the
+  // existing splash animation. Returning visits also avoid a disappearing item.
+  if (checkFeatured && featuredAvailable === null) return <div className="portfolio-page" aria-label="Caricamento" />;
 
   return (
     <main className="portfolio-page portfolio-home">

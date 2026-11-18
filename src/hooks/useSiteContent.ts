@@ -3,6 +3,7 @@ import {
   DEFAULT_SITE_SETTINGS,
   getSiteContentStatus,
   getSiteSettings,
+  hasPublishedFeaturedArtwork,
   listArtworkItems,
   saveSiteSettings,
   SITE_CONTENT_EVENT,
@@ -74,6 +75,61 @@ function createContentStore<T>(initial: T, read: () => Promise<T>, kind: "settin
 const settingsStore = createContentStore(DEFAULT_SITE_SETTINGS, getSiteSettings, "settings");
 const publishedArtworkStore = createContentStore<ArtworkItem[]>([], () => listArtworkItems(false), "artworks");
 const allArtworkStore = createContentStore<ArtworkItem[]>([], () => listArtworkItems(true), "artworks");
+
+function createFeaturedPresenceStore() {
+  let value: boolean | null = null;
+  let started = false;
+  let pending: Promise<void> | null = null;
+  const listeners = new Set<() => void>();
+  const read = (): Promise<void> => {
+    if (pending) return pending;
+    started = true;
+    pending = (async () => {
+      try { value = await hasPublishedFeaturedArtwork(); }
+      // An unavailable API is not evidence that real articles were removed.
+      catch { value = true; }
+      finally {
+        pending = null;
+        listeners.forEach((listener) => listener());
+      }
+    })();
+    return pending;
+  };
+  const onChange = (event: Event) => {
+    if ((event as CustomEvent<{ kind: string }>).detail?.kind !== "artworks") return;
+    if (pending) void pending.then(read);
+    else void read();
+  };
+  return {
+    getSnapshot: () => value,
+    ensureLoaded: () => {
+      if (started) return;
+      started = true;
+      if (pending) void pending.then(read);
+      else void read();
+    },
+    subscribe: (listener: () => void) => {
+      if (listeners.size === 0) window.addEventListener(SITE_CONTENT_EVENT, onChange);
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          window.removeEventListener(SITE_CONTENT_EVENT, onChange);
+          started = false;
+        }
+      };
+    },
+  };
+}
+
+const featuredPresenceStore = createFeaturedPresenceStore();
+const subscribeToNothing = () => () => {};
+
+export function usePublishedFeaturedAvailability(enabled = true): boolean | null {
+  const value = useSyncExternalStore(enabled ? featuredPresenceStore.subscribe : subscribeToNothing, featuredPresenceStore.getSnapshot);
+  useEffect(() => { if (enabled) featuredPresenceStore.ensureLoaded(); }, [enabled]);
+  return value;
+}
 
 export function useSiteContent() {
   const snapshot = useSyncExternalStore(settingsStore.subscribe, settingsStore.getSnapshot);

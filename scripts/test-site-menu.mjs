@@ -113,7 +113,7 @@ function componentFixture({ editing = false } = {}) {
     if (id === "react/jsx-runtime") return jsx;
     if (id === "react-router-dom") return { useNavigate: () => (path) => navigations.push(path) };
     if (id === "@/components/SiteEditControl") return { default: "SiteEditControl", useInlineSiteEditing: () => ({ editing, settings: custom, draft, update }) };
-    if (id === "@/hooks/useSiteContent") return { useSiteContent: () => ({ loading: false }) };
+    if (id === "@/hooks/useSiteContent") return { useSiteContent: () => ({ loading: false }), usePublishedFeaturedAvailability: () => true };
     if (id === "@/lib/siteMenu") return helpers;
     if (id === "@/services/siteContentRepository") return { uploadSiteAsset: (file) => { uploads.push(file); return new Promise((resolve) => { uploads.resolve = resolve; }); } };
     return {};

@@ -395,6 +395,25 @@ export async function listArtworkItems(includeUnpublished = false): Promise<Artw
   }
 }
 
+/** Home needs only presence, never the catalogue or resolved media assets. */
+export async function hasPublishedFeaturedArtwork(): Promise<boolean> {
+  if (LOCAL_CONTENT_MODE) {
+    const local = await readLocal<ArtworkItem[]>("drafts", ARTWORKS_KEY);
+    if (local !== undefined) {
+      if (!Array.isArray(local)) throw new Error("Catalogo locale non disponibile.");
+      return local.some((item) => item.is_published && item.is_featured_in);
+    }
+  }
+  const { data, error } = await withTimeout((signal) => supabase.from("artworks")
+    .select("id")
+    .eq("is_published", true)
+    .eq("is_featured_in", true)
+    .limit(1)
+    .abortSignal(signal));
+  if (error) throw error;
+  return Boolean(data?.length);
+}
+
 export async function saveArtworkItem(item: ArtworkItem): Promise<ArtworkItem> {
   if (!item.title.trim()) throw new Error("Inserisci un titolo per l'opera.");
   if (!item.media_url && !(item.kind === "model" && item.model_id)) throw new Error("Carica un file o scegli un modello 3D.");
