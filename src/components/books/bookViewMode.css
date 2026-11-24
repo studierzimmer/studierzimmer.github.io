@@ -1,5 +1,8 @@
 .book-view-scene { box-sizing:border-box; }
 .book-page-clip { position:relative; flex:0 0 auto; overflow:hidden; transform-origin:center; transition:width 480ms cubic-bezier(.22,.88,.3,1),transform 480ms cubic-bezier(.22,.88,.3,1); }
+/* A curling sheet can extend beyond both resting book bounds. Keep zoom clipped. */
+.public-book-viewport.is-page-folding:not(.is-magnified),
+.public-book-viewport.is-page-folding:not(.is-magnified) .book-page-clip { overflow:visible; }
 .public-book-viewport[data-book-view-mode="single"],.public-book-viewport[data-book-view-mode="single"] .book-page-clip { overflow:visible; }
 .book-page-canvas { position:absolute; left:0; top:0; transform-origin:0 0; }
 .book-view-controls { position:fixed; right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom)); z-index:225; display:flex; align-items:center; gap:4px; color:#8b949b; pointer-events:none; }
