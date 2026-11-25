@@ -1,0 +1,1 @@
+import{r as t}from"./react-core-Dk0zBmTC.js";import{u as s}from"./react-three-Djt0Hbj5.js";import"./three-UUzzrHQM.js";import"./postprocessing-BFGXDWIr.js";function f({onProgress:r}){const{progress:o}=s();return t.useEffect(()=>{r(o)},[r,o]),null}export{f as default};

@@ -1,4 +1,4 @@
-import{r as n,j as e}from"./react-core-Dk0zBmTC.js";import{listAllThreeDModelsForAdmin as he,createThreeDModel as _e,updateThreeDModel as Me,setFeaturedThreeDModel as Ee,replaceThreeDModelFile as Ce,deleteThreeDModel as De,replaceThreeDModelHdri as Re,removeThreeDModelHdri as Te}from"./threeDModelRepository-B_pysz-P.js";import{i as Pe,ah as Fe,ag as pe,ai as xe,aj as Le,ak as $e}from"./index-Buh9i8PU.js";const ze=`
+import{r as n,j as e}from"./react-core-Dk0zBmTC.js";import{listAllThreeDModelsForAdmin as he,createThreeDModel as _e,updateThreeDModel as Me,setFeaturedThreeDModel as Ee,replaceThreeDModelFile as Ce,deleteThreeDModel as De,replaceThreeDModelHdri as Re,removeThreeDModelHdri as Te}from"./threeDModelRepository-DEkUsdIb.js";import{i as Pe,ac as Fe,aa as pe,ad as xe,ae as Le,af as $e}from"./index-Cg99__bQ.js";const ze=`
 .book-hue-slider {
   appearance: none;
   height: 12px;
