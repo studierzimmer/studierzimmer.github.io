@@ -181,7 +181,6 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
 
 const AppViewport = () => {
   const destination = useLocation();
-  const navigate = useNavigate();
   const inline = useInlineSiteEditing();
   useEffect(() => {
     const ocean = destination.pathname === "/navigate";
@@ -189,7 +188,7 @@ const AppViewport = () => {
     if (!inline.loading) setOceanPreloadEnvironment(inline.settings.ocean_environment);
     if (ocean) void preloadOceanExperience({ intent: true }).catch(() => undefined);
   }, [destination.pathname, inline.loading, inline.settings.ocean_environment]);
-  return <><RouteChoreography>{(location) => <DisplayedViewport location={location} />}</RouteChoreography><OceanLoadingOverlay active={destination.pathname === "/navigate"} onCancel={() => navigate("/")} /></>;
+  return <><RouteChoreography>{(location) => <DisplayedViewport location={location} />}</RouteChoreography><OceanLoadingOverlay active={destination.pathname === "/navigate"} /></>;
 };
 
 const App = () => (

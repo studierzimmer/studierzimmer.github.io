@@ -8,8 +8,7 @@
 .ocean-loading-dots.is-stopped > span { animation:none; }
 .ocean-loading-error { position:absolute; top:calc(50% + 3.5rem); left:50%; transform:translateX(-50%); width:min(340px,calc(100vw - 48px)); text-align:center; font-size:14px; line-height:1.6; }
 .ocean-loading-error p { margin:0 0 12px; }
-.ocean-loading-error button, .ocean-loading-cancel { min-height:44px; border:0; background:transparent; color:inherit; font:inherit; padding:8px 12px; cursor:pointer; text-decoration:none; }
-.ocean-loading-cancel { position:absolute; bottom:max(22px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); font-size:14px; }
+.ocean-loading-error button { min-height:44px; border:0; background:transparent; color:inherit; font:inherit; padding:8px 12px; cursor:pointer; text-decoration:none; }
 .ocean-loading-overlay button:focus-visible { outline:1px solid currentColor; outline-offset:4px; }
 @keyframes ocean-loading-dot { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-.3em); } }
 @media(prefers-reduced-motion:reduce) { .ocean-loading-dots > span { animation:none !important; } }

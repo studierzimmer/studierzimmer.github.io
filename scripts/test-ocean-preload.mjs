@@ -281,17 +281,24 @@ for (const policy of [{ saveData: true }, { effectiveType: "slow-2g" }, { effect
     if (id.endsWith(".css")) return {};
     throw new Error(`Unexpected overlay import: ${id}`);
   }, { document: { body: { kind: "body" } } });
-  assert.equal(overlay.default({ active: true, onCancel() {} }), null);
+  assert.equal(overlay.default({ active: true }), null);
   assert.equal(portals.length, 0, "already-ready normal entry has no loading flash at all");
   current = { status: "loading", percent: 42, error: null };
-  assert.equal(overlay.default({ active: false, onCancel() {} }), null, "background work never shows loading UI");
-  const tree = overlay.default({ active: true, onCancel() {} });
+  assert.equal(overlay.default({ active: false }), null, "background work never shows loading UI");
+  const tree = overlay.default({ active: true });
   assert.equal(portals[0].host.kind, "body");
   const panel = tree.type(tree.props);
   const meter = panel.props.children[0], dots = meter.props.children[1];
   assert.equal(meter.props["aria-valuenow"], 42);
   assert.equal(dots.props.children.length, 3);
   assert.ok(dots.props.children.every((dot) => dot.props.children === "."));
+  const elements = (value) => Array.isArray(value) ? value.flatMap(elements) : value && typeof value === "object" && value.props ? [value, ...elements(value.props.children)] : [];
+  assert.equal(elements(panel).filter((element) => element.type === "button").length, 0, "normal loading shows only the percentage and dots, without a cancel button");
+  assert.equal(elements(panel).filter((element) => element.props.className === "ocean-loading-percent").length, 1);
+  current = { status: "error", percent: 42, error: "offline" };
+  const errorTree = overlay.default({ active: true });
+  const errorPanel = errorTree.type(errorTree.props);
+  assert.deepEqual(elements(errorPanel).filter((element) => element.type === "button").map((element) => element.props.children), ["riprova", "ricarica pagina"], "connection failures keep recovery actions without adding a cancel button");
 }
 const css = read("src/components/ocean/ocean-loading.css");
 assert.match(css, /\.ocean-loading-overlay\s*\{[^}]*position:fixed;\s*inset:0/);
@@ -299,5 +306,6 @@ assert.match(css, /\.ocean-loading-meter\s*\{[^}]*left:50%;\s*top:50%;\s*transfo
 assert.match(css, /span:nth-child\(2\),\s*\.ocean-loading-dots\s*>\s*span:nth-child\(3\)\s*\{\s*animation:/);
 assert.doesNotMatch(css, /opacity|filter:|animation:.*fade/i);
 assert.match(css, /prefers-reduced-motion:reduce/);
+assert.doesNotMatch(css, /ocean-loading-cancel/);
 
 console.log("PASS: exact original bytes, bounded/idle cache warming, parser AND complete-main-frame gated100, saved-env-before-render, recoverable lazy retry, cancellation/token/root retention, no backgroundCanvas, renderer-cache cleanup and centered conditional dots; no network/DB/browser.");

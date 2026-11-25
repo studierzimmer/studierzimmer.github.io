@@ -5,7 +5,7 @@ import { useInlineSiteEditing } from "@/components/SiteEditControl";
 import { getOceanPreloadSnapshot, preloadOceanExperience, subscribeOceanPreload, type OceanPreloadSnapshot } from "@/lib/oceanPreload";
 import "./ocean-loading.css";
 
-function LoadingPanel({ snapshot, onCancel }: { snapshot: OceanPreloadSnapshot; onCancel: () => void }) {
+function LoadingPanel({ snapshot }: { snapshot: OceanPreloadSnapshot }) {
   const { settings } = useInlineSiteEditing();
   const reduced = useReducedMotion();
   const [displayed, setDisplayed] = useState(snapshot.percent);
@@ -39,13 +39,12 @@ function LoadingPanel({ snapshot, onCancel }: { snapshot: OceanPreloadSnapshot; 
       <span className={`ocean-loading-dots${snapshot.status === "error" ? " is-stopped" : ""}`} aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
     </div>
     {snapshot.status === "error" && <div className="ocean-loading-error" role="alert"><p>Ocean non è ancora disponibile. Controlla la connessione e riprova.</p><button type="button" onClick={() => { void preloadOceanExperience({ intent: true }).catch(() => undefined); }}>riprova</button><button type="button" onClick={() => window.location.reload()}>ricarica pagina</button></div>}
-    <button type="button" className="ocean-loading-cancel" style={{ visibility: showIndicator ? "visible" : "hidden" }} onClick={onCancel}>annulla</button>
   </div>;
 }
 
 /** Body portal: route/menu transforms can never move the viewport's center. */
-export default function OceanLoadingOverlay({ active, onCancel }: { active: boolean; onCancel: () => void }) {
+export default function OceanLoadingOverlay({ active }: { active: boolean }) {
   const snapshot = useSyncExternalStore(subscribeOceanPreload, getOceanPreloadSnapshot, getOceanPreloadSnapshot);
   if (!active || snapshot.status === "ready") return null;
-  return createPortal(<LoadingPanel snapshot={snapshot} onCancel={onCancel} />, document.body);
+  return createPortal(<LoadingPanel snapshot={snapshot} />, document.body);
 }
