@@ -7,9 +7,13 @@ import React, {
 } from "react";
 import {
   loadAnalyticsReport,
+  loadHourlyAnalyticsReport,
   type AnalyticsDailyPoint,
   type AnalyticsReport,
+  type HourlyAnalyticsReport,
 } from "@/services/analyticsRepository";
+import AdminHourlyTraffic, { AnalyticsTrafficExclusionControl } from "./AdminHourlyTraffic";
+import { ANALYTICS_TRAFFIC_EXCLUSION_EVENT, readAnalyticsTrafficExclusion, setAnalyticsTrafficExcluded } from "@/services/analyticsTracker";
 
 type MotionState = "outside" | "entering" | "visible";
 
@@ -78,6 +82,12 @@ function friendlyAnalyticsError(error: unknown): string {
   return message || "Unable to load analytics.";
 }
 
+function todayInRome(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 export default function AdminAnalyticsInfo() {
   const [rangeDays, setRangeDays] = useState<(typeof rangeOptions)[number]>(30);
   const [report, setReport] = useState<AnalyticsReport>(emptyReport);
@@ -86,6 +96,47 @@ export default function AdminAnalyticsInfo() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [motion, setMotion] = useState<MotionState>("outside");
   const requestId = useRef(0);
+  const [hourlyDay, setHourlyDay] = useState(todayInRome);
+  const [hourlyReport, setHourlyReport] = useState<HourlyAnalyticsReport | null>(null);
+  const [hourlyLoading, setHourlyLoading] = useState(true);
+  const [hourlyError, setHourlyError] = useState<string | null>(null);
+  const hourlyRequestId = useRef(0);
+  const [trafficExclusion, setTrafficExclusion] = useState(readAnalyticsTrafficExclusion);
+  const [exclusionError, setExclusionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refresh = () => setTrafficExclusion(readAnalyticsTrafficExclusion());
+    window.addEventListener(ANALYTICS_TRAFFIC_EXCLUSION_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    refresh();
+    return () => { window.removeEventListener(ANALYTICS_TRAFFIC_EXCLUSION_EVENT, refresh); window.removeEventListener("storage", refresh); };
+  }, []);
+
+  const changeTrafficExclusion = (excluded: boolean) => {
+    setExclusionError(null);
+    try { setAnalyticsTrafficExcluded(excluded); setTrafficExclusion(readAnalyticsTrafficExclusion()); }
+    catch { setExclusionError("Non riesco a salvare la preferenza di esclusione in questo browser."); }
+  };
+
+  const loadHourly = useCallback(async () => {
+    const current = ++hourlyRequestId.current;
+    setHourlyLoading(true); setHourlyError(null);
+    try {
+      const next = await loadHourlyAnalyticsReport(hourlyDay);
+      if (current !== hourlyRequestId.current) return;
+      setHourlyReport(next);
+    } catch (loadError) {
+      if (current !== hourlyRequestId.current) return;
+      const message = loadError instanceof Error ? loadError.message : String(loadError ?? "");
+      setHourlyError(`Statistiche orarie non disponibili.${message ? ` ${message}` : " Riprova tra poco."}`);
+      // Keep the last successful report explicitly labelled with its own day.
+    } finally { if (current === hourlyRequestId.current) setHourlyLoading(false); }
+  }, [hourlyDay]);
+
+  useEffect(() => {
+    void loadHourly();
+    return () => { hourlyRequestId.current += 1; };
+  }, [loadHourly]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setMotion("entering"));
@@ -191,6 +242,8 @@ export default function AdminAnalyticsInfo() {
         </div>
       )}
 
+      <AnalyticsTrafficExclusionControl {...trafficExclusion} onChange={changeTrafficExclusion} error={exclusionError} {...panel(50)} />
+
       <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {metrics.map(([label, value], index) => (
           <article
@@ -266,6 +319,8 @@ export default function AdminAnalyticsInfo() {
           <span>{lastDay}</span>
         </div>
       </section>
+
+      <AdminHourlyTraffic day={hourlyDay} report={hourlyReport} loading={hourlyLoading} error={hourlyError} onDayChange={setHourlyDay} onRefresh={() => void loadHourly()} {...panel(330)} />
 
       <section className="mt-6 grid gap-4 lg:grid-cols-3">
         <article {...panel(350)} className={`${panel(350).className} border border-black/20 p-5`}>

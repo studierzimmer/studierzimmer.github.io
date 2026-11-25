@@ -47,6 +47,9 @@ export function bindOceanMovementKeys(
   const keyName = (event: KeyboardEvent) => movementCodes[event.code] || event.key?.toLowerCase();
   const keyDown = (event: KeyboardEvent) => {
     if (!isActive() || documentSurface.hidden || editable(event.target) || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) { clear(); return; }
+    // State is already held after the first keydown. A synthetic release for
+    // hidden controls must not be undone by the OS repeating that old contact.
+    if (event.repeat) return;
     const name = keyName(event);
     if (!movementNames.has(name)) return;
     if (name !== "shift" && typeof event.shiftKey === "boolean") {
@@ -71,6 +74,7 @@ export function bindOceanMovementKeys(
   windowSurface.addEventListener("keydown", keyDown);
   windowSurface.addEventListener("keyup", keyUp);
   windowSurface.addEventListener("blur", clear);
+  windowSurface.addEventListener("ocean-controls-release", clear);
   windowSurface.addEventListener("explore-mode", mode);
   windowSurface.addEventListener("skyocean-activity", visibility);
   documentSurface.addEventListener("visibilitychange", visibility);
@@ -79,6 +83,7 @@ export function bindOceanMovementKeys(
     windowSurface.removeEventListener("keydown", keyDown);
     windowSurface.removeEventListener("keyup", keyUp);
     windowSurface.removeEventListener("blur", clear);
+    windowSurface.removeEventListener("ocean-controls-release", clear);
     windowSurface.removeEventListener("explore-mode", mode);
     windowSurface.removeEventListener("skyocean-activity", visibility);
     documentSurface.removeEventListener("visibilitychange", visibility);
@@ -133,6 +138,7 @@ export function bindOceanTouchSprint(
   windowSurface.addEventListener("pointercancel", end, true);
   windowSurface.addEventListener("lostpointercapture", end, true);
   windowSurface.addEventListener("blur", clear);
+  windowSurface.addEventListener("ocean-controls-release", clear);
   windowSurface.addEventListener("explore-mode", mode);
   windowSurface.addEventListener("skyocean-activity", visibility);
   documentSurface.addEventListener("visibilitychange", visibility);
@@ -144,6 +150,7 @@ export function bindOceanTouchSprint(
     windowSurface.removeEventListener("pointercancel", end, true);
     windowSurface.removeEventListener("lostpointercapture", end, true);
     windowSurface.removeEventListener("blur", clear);
+    windowSurface.removeEventListener("ocean-controls-release", clear);
     windowSurface.removeEventListener("explore-mode", mode);
     windowSurface.removeEventListener("skyocean-activity", visibility);
     documentSurface.removeEventListener("visibilitychange", visibility);

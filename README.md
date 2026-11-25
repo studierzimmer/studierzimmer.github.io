@@ -356,3 +356,26 @@ npm run deploy
 
 Live site: https://www.studierzimmer.ch (the GitHub Pages URL redirects here).
 Keep `public/CNAME` in the build so deployments preserve the existing custom domain.
+
+## Private traffic statistics
+
+The admin statistics panel includes arrivals by hour for a selected day in
+`Europe/Rome`, including 23/25-hour daylight-saving days. Arrivals count the
+earliest recorded `session_start` per session ID within that day, not unique
+people. Reloads in the same session do not add hourly arrivals.
+
+Instagram arrivals use genuine Instagram referrer hosts, or the dedicated link:
+`https://www.studierzimmer.ch/?utm_source=instagram`. Only the allowlisted entry
+source is retained in memory until consent; no full query string is collected.
+For `session_start` only, the existing nullable `value_int` column reserves `1`
+for a declared Instagram entry. Other events keep their existing numeric values.
+Missing historical attribution and visits without analytics consent cannot be
+reconstructed. No new Supabase migration is needed: hourly reports use the
+existing admin-only SELECT policy on `analytics_events`.
+
+Development builds and local/loopback previews never send analytics. In the
+private panel, **Escludi questo browser dalle statistiche** also disables future
+collection from the production browser used for editing and testing. This is a
+separate preference from consent and must be enabled on each working browser
+and device. It does not delete old records. If persistent browser storage is
+unavailable, the panel explains that exclusion lasts only for the current tab.

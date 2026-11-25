@@ -155,12 +155,13 @@ function findStates(node) {
 }
 findStates(pageAST);
 let stateIndex = 0, editing = true, saving = false, stateOverrides = {}, updates = [], navigations = [];
-let pageEffects = [];
+let pageEffects = [], controlsOptions;
+const controlsActions = [];
 const uiEvents = [], windowListeners = new Map(), documentListeners = new Map();
 const pageDocument = { hidden: false, getElementById: () => null, addEventListener: (name, callback) => documentListeners.set(name, callback), removeEventListener: (name) => documentListeners.delete(name) };
 const config = { ...repository("local").api.DEFAULT_SITE_SETTINGS, ocean_title: "TITOLO", ocean_subtitle: "SOTTOTITOLO", ocean_about: "TESTO", ocean_labels: custom };
 const react = {
-  useMemo: (factory) => factory(), useRef: (current) => ({ current }), useEffect(callback) { pageEffects.push(callback); }, useLayoutEffect() {}, useId: () => "mock-id",
+  useMemo: (factory) => factory(), useCallback: (callback) => callback, useRef: (current) => ({ current }), useEffect(callback) { pageEffects.push(callback); }, useLayoutEffect() {}, useId: () => "mock-id",
   useState(initial) { const name = stateNames[stateIndex++]; return [Object.hasOwn(stateOverrides, name) ? stateOverrides[name] : typeof initial === "function" ? initial() : initial, () => {}]; },
 };
 const control = () => null;
@@ -173,6 +174,10 @@ const page = compile(pageSource, {
   "@/components/SiteEditControl": { __esModule: true, default: control, useInlineSiteEditing: () => ({ editing, saving, isAdmin: true, settings: config, draft: config, update: (patch) => updates.push(patch) }) },
   "@/components/ocean/OceanEnvironmentEditor": { __esModule: true, default: control },
   "@/components/ocean/OceanInlineText": { __esModule: true, default: inline },
+  "@/components/ocean/useOceanControlsTransition": { useOceanControlsTransition(options) {
+    controlsOptions = options;
+    return { tools: { current: null }, movement: { current: null }, phase: "visible", busy: () => false, begin: () => controlsActions.push("begin") };
+  } },
   "@/services/characterRepository": { listPublishedCharacters() { throw new Error("No catalogue/network calls in text tests"); } },
   "@/types/oceanEnvironment": environment, "@/types/oceanText": labels,
 }, { document: pageDocument, window: { dispatchEvent: (event) => uiEvents.push(event), addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener: (name) => windowListeners.delete(name) }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } }, setTimeout: () => 1, clearTimeout() {} }).default;
@@ -200,7 +205,26 @@ assert.equal(render({ started: false, cameraState: { detached: true, returning: 
 assert.equal(render({ started: true, cameraState: { detached: false, returning: false } }).some((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura"), false);
 assert.equal(render({ started: true, cameraState: { detached: true, returning: true } }).find((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura").props.disabled, true);
 render({ started: true, cameraState: { detached: true, returning: false } }).find((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura").props.onClick();
-assert.equal(uiEvents.at(-1).type, "ocean-camera-return");
+assert.equal(controlsActions.at(-1), "begin", "Re-Center begins the controls choreography rather than moving the camera before scale-out");
+{
+  const returning = render({ started: true, cameraState: { detached: true, returning: false } });
+  const button = returning.find((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura");
+  assert.equal(button.props.initial.scale, 0); assert.equal(button.props.animate.scale, 1); assert.equal(button.props.exit.scale, 0);
+  assert.equal(button.props.transition.type, "spring");
+  assert.ok(returning.some((node) => node.props?.className === "ocean-tools-inner ocean-controls-scale"));
+  assert.ok(returning.some((node) => node.props?.className === "ocean-movement-inner ocean-controls-scale"));
+  const joystick = returning.find((node) => node.props?.className === "ocean-joystick");
+  const released = [];
+  const target = { setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture: (id) => released.push(id) };
+  joystick.props.onPointerDown({ pointerId: 71, clientX: 10, clientY: 10, currentTarget: target, preventDefault() {} });
+  const before = uiEvents.length;
+  controlsOptions.releaseInputs();
+  assert.deepEqual(released, [71], "recentring releases a held UI capture before hiding its controls");
+  assert.deepEqual(uiEvents.slice(before).map((event) => event.type), ["explore-joystick-contact", "explore-joystick", "explore-vertical", "explore-sprint", "ocean-controls-release"]);
+  const after = uiEvents.length;
+  joystick.props.onPointerUp({ pointerId: 71 });
+  assert.equal(uiEvents.length, after, "releasing a hidden old contact cannot leave movement held or trigger a jump");
+}
 for (const kind of ["avatar", "aircraft"]) assert.equal(render({ started: true, activeCharacterKind: kind }).some((node) => node.type === "button" && node.props.children === "Surface"), false, `Surface is never shown for ${kind}`);
 assert.equal(render({ started: false, activeCharacterKind: "ship" }).some((node) => node.type === "button" && node.props.children === "Surface"), false, "Surface is not an intro action");
 {

@@ -170,5 +170,6 @@ cleanup(); assert.equal(sources[0].stops, 1); assert.equal(contexts[0].state, "c
 const cameraHook = read("src/components/ocean/useOceanCharacterCamera.ts");
 assert.match(cameraHook, /ocean-camera-return/); assert.match(cameraHook, /ocean-camera-state/); assert.match(cameraHook, /data-ocean-preparing/);
 const page = read("src/pages/OceanPage.tsx");
-assert.match(page, /ocean-audio-unlock/); assert.match(page, /ocean-camera-return/);
+assert.match(page, /ocean-audio-unlock/); assert.match(page, /useOceanControlsTransition/);
+assert.match(read("src/components/ocean/useOceanControlsTransition.ts"), /ocean-camera-return/, "camera commands remain connected through the controls' completion-driven choreography");
 console.log("PASS: avatar1→3×/vehicles3→6× speeds, held-joystick second-finger sprint/releases, current-avatar elastic camera return, gesture-unlocked Cessna idle/throttle and silent inactive routes (no browser/network).");

@@ -1,4 +1,11 @@
 import { supabase } from "@/lib/supabase";
+import { hasDeclaredInstagramSource, INSTAGRAM_ENTRY_SOURCE_CODE } from "@/lib/hourlyAnalytics";
+import { ANALYTICS_TRAFFIC_EXCLUSION_KEY, automaticAnalyticsTrafficExclusion, type AnalyticsTrafficExclusionState } from "@/lib/analyticsTrafficExclusion";
+export type { AnalyticsTrafficExclusionState } from "@/lib/analyticsTrafficExclusion";
+
+// Capture the entry source before SPA navigation removes its query. Retain
+// only this boolean in memory: no query string, URL, cookie or new identifier.
+const instagramEntry = typeof window !== "undefined" && hasDeclaredInstagramSource(window.location?.search);
 
 export type AnalyticsConsentChoice = "necessary" | "analytics";
 
@@ -42,10 +49,15 @@ const CONSENT_STORAGE_KEY = "studierzimmer_analytics_consent_v1";
 const SESSION_STORAGE_KEY = "studierzimmer_analytics_session_v1";
 const CONSENT_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000;
 export const ANALYTICS_CONSENT_EVENT = "studierzimmer:analytics-consent";
+export const ANALYTICS_TRAFFIC_EXCLUSION_EVENT = "studierzimmer:analytics-traffic-exclusion";
 
 let memorySessionId: string | null = null;
 let sessionStarted = false;
 let analyticsUnavailable = false;
+let memoryTrafficExcluded: boolean | null = null;
+let previousTrafficExcluded: boolean | null = null;
+let sessionResetRequired = false;
+let privacyEpoch = 0;
 
 function safeStorage(
   storage: "localStorage" | "sessionStorage"
@@ -81,6 +93,41 @@ function safeRemoveItem(storage: Storage | null, key: string) {
   } catch {
     // Storage can be unavailable in private browsing contexts.
   }
+}
+
+function clearAnalyticsSession(): void {
+  safeRemoveItem(safeStorage("sessionStorage"), SESSION_STORAGE_KEY);
+  memorySessionId = null;
+  sessionStarted = false;
+  sessionResetRequired = true;
+  privacyEpoch++;
+}
+
+export function readAnalyticsTrafficExclusion(): AnalyticsTrafficExclusionState {
+  const automaticReason = automaticAnalyticsTrafficExclusion(import.meta.env.DEV, typeof window === "undefined" ? undefined : window.location?.hostname);
+  let stored: string | null = null;
+  try { stored = safeStorage("localStorage")?.getItem(ANALYTICS_TRAFFIC_EXCLUSION_KEY) ?? null; } catch { /* Memory-only fallback. */ }
+  const savedExclusion = stored === "1" || stored === "true";
+  // A failed attempt to remove a saved exclusion must never silently enable
+  // collection. A failed opt-out save still blocks this tab immediately.
+  const manual = savedExclusion || memoryTrafficExcluded === true;
+  const excluded = Boolean(automaticReason) || manual;
+  if (excluded && previousTrafficExcluded !== true) clearAnalyticsSession();
+  previousTrafficExcluded = excluded;
+  return { excluded, automatic: Boolean(automaticReason), reason: automaticReason ?? (manual ? "browser" : null), persisted: savedExclusion };
+}
+
+export function setAnalyticsTrafficExcluded(excluded: boolean): void {
+  memoryTrafficExcluded = excluded;
+  try {
+    const storage = safeStorage("localStorage");
+    if (storage) { storage.setItem(ANALYTICS_TRAFFIC_EXCLUSION_KEY, excluded ? "1" : "0"); memoryTrafficExcluded = null; }
+  } catch { /* Respect the requested opt-out in memory when storage is blocked. */ }
+  // Both excluding and explicitly opting back in begin a fresh future session;
+  // no end event or deletion request is sent for an editor/test session.
+  clearAnalyticsSession();
+  const state = readAnalyticsTrafficExclusion();
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(ANALYTICS_TRAFFIC_EXCLUSION_EVENT, { detail: state }));
 }
 
 function normalizedPath(path = window.location.pathname): string {
@@ -124,13 +171,14 @@ function randomSessionId(): string {
 }
 
 function getSessionId(): string {
-  const storage = safeStorage("sessionStorage");
-  const existing = safeGetItem(storage, SESSION_STORAGE_KEY);
-  if (existing) return existing;
   if (memorySessionId) return memorySessionId;
+  const storage = safeStorage("sessionStorage");
+  const existing = sessionResetRequired ? null : safeGetItem(storage, SESSION_STORAGE_KEY);
+  if (existing) { memorySessionId = existing; return existing; }
 
   const sessionId = randomSessionId();
   memorySessionId = sessionId;
+  sessionResetRequired = false;
   safeSetItem(storage, SESSION_STORAGE_KEY, sessionId);
   return sessionId;
 }
@@ -186,9 +234,7 @@ export function saveAnalyticsConsent(choice: AnalyticsConsentChoice): void {
   );
 
   if (choice === "necessary") {
-    safeRemoveItem(safeStorage("sessionStorage"), SESSION_STORAGE_KEY);
-    memorySessionId = null;
-    sessionStarted = false;
+    clearAnalyticsSession();
   } else {
     analyticsUnavailable = false;
   }
@@ -216,6 +262,7 @@ export async function trackAnalyticsEvent({
 }: TrackAnalyticsEventInput): Promise<boolean> {
   if (
     typeof window === "undefined" ||
+    readAnalyticsTrafficExclusion().excluded ||
     readAnalyticsConsent() !== "analytics" ||
     analyticsUnavailable
   ) {
@@ -223,6 +270,7 @@ export async function trackAnalyticsEvent({
   }
 
   const sessionId = getSessionId();
+  const epoch = privacyEpoch;
   const safeTargetId = targetId?.trim().slice(0, 120) || null;
   const safeValue = Number.isFinite(valueInt)
     ? Math.min(86400000, Math.max(0, Math.round(valueInt ?? 0)))
@@ -238,6 +286,10 @@ export async function trackAnalyticsEvent({
     sessionStarted = true;
   }
 
+  // session_start can be awaiting its request while another tab/user changes
+  // the exclusion or consent choice. Re-read immediately before EVERY send.
+  if (readAnalyticsTrafficExclusion().excluded || readAnalyticsConsent() !== "analytics" || epoch !== privacyEpoch) return false;
+
   const { data, error } = await supabase.rpc("track_analytics_event", {
     p_session_id: sessionId,
     p_event_name: eventName,
@@ -247,7 +299,7 @@ export async function trackAnalyticsEvent({
     p_referrer_host:
       eventName === "session_start" ? safeReferrerHost() : null,
     p_device_type: deviceType(),
-    p_value_int: safeValue,
+    p_value_int: eventName === "session_start" ? (instagramEntry ? INSTAGRAM_ENTRY_SOURCE_CODE : null) : safeValue,
   });
 
   if (error) {

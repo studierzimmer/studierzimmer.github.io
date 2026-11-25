@@ -1,4 +1,6 @@
 import { supabase } from "@/lib/supabase";
+import { buildHourlyAnalyticsReport, romeDayInterval, type AnalyticsSessionArrival, type HourlyAnalyticsReport } from "@/lib/hourlyAnalytics";
+export type { HourlyAnalyticsPoint, HourlyAnalyticsReport } from "@/lib/hourlyAnalytics";
 
 export interface AnalyticsSummary {
   visits: number;
@@ -131,4 +133,37 @@ export async function loadAnalyticsReport(
       })),
     },
   };
+}
+
+/** Existing admin-only SELECT/RLS; no schema changes or collection writes. */
+export async function loadHourlyAnalyticsReport(day: string): Promise<HourlyAnalyticsReport> {
+  const interval = romeDayInterval(day);
+  const { data: allowed, error: adminError } = await supabase.rpc("is_admin");
+  if (adminError) throw asError(adminError, "Impossibile verificare l'accesso alle statistiche.");
+  if (allowed !== true) throw new Error("Accedi con l'account amministratore per vedere le statistiche.");
+  // Freeze today's read boundary so new arrivals cannot shift pagination.
+  const end = new Date(Math.min(Date.parse(interval.end), Date.now())).toISOString();
+  if (end <= interval.start) return buildHourlyAnalyticsReport(day, []);
+  const rows: AnalyticsSessionArrival[] = [], ids = new Set<string>();
+  let expected: number | null = null;
+  for (;;) {
+    const { data, error, count } = await supabase.from("analytics_events")
+      .select("id,session_id,recorded_at,referrer_host,value_int", { count: "exact" })
+      .eq("event_name", "session_start")
+      .gte("recorded_at", interval.start).lt("recorded_at", end)
+      .order("recorded_at", { ascending: true }).order("id", { ascending: true })
+      .range(rows.length, rows.length + 999);
+    if (error) throw asError(error, "Impossibile caricare gli arrivi ora per ora.");
+    if (!Number.isInteger(count) || count < 0) throw new Error("Impossibile verificare che le statistiche siano complete. Riprova.");
+    if (expected === null) expected = count;
+    else if (expected !== count) throw new Error("Le statistiche sono cambiate durante il caricamento. Aggiorna il report.");
+    const page = (data ?? []) as AnalyticsSessionArrival[];
+    for (const row of page) {
+      if (ids.has(String(row.id))) throw new Error("Caricamento incompleto delle statistiche. Riprova.");
+      ids.add(String(row.id)); rows.push(row);
+    }
+    if (rows.length === expected) break;
+    if (!page.length || rows.length > expected) throw new Error("Caricamento incompleto delle statistiche. Riprova.");
+  }
+  return buildHourlyAnalyticsReport(day, rows);
 }

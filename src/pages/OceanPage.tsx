@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { preloadOceanAssets } from "@/components/SkyOceanBackground";
@@ -8,6 +8,7 @@ import { listPublishedCharacters } from "@/services/characterRepository";
 import type { Character3D } from "@/types/characters3d";
 import OceanEnvironmentEditor from "@/components/ocean/OceanEnvironmentEditor";
 import OceanInlineText from "@/components/ocean/OceanInlineText";
+import { useOceanControlsTransition } from "@/components/ocean/useOceanControlsTransition";
 import { normalizeOceanEnvironment, OCEAN_ENVIRONMENT_EVENT } from "@/types/oceanEnvironment";
 import { DEFAULT_OCEAN_LABELS, normalizeOceanLabels, type OceanLabels } from "@/types/oceanText";
 import "@/styles/ocean-page.css";
@@ -74,8 +75,28 @@ export default function OceanPage() {
   const exitingRef = useRef(false);
   const startTimer = useRef<ReturnType<typeof setTimeout>>();
   const joystickStart = useRef<{ x: number; y: number; moved: boolean; pointerId: number } | null>(null);
+  const heldControls = useRef(new Map<number, HTMLElement>());
   const mask = `ocean-aperture-${useId().replace(/:/g, "")}`;
   const figuresId = useId();
+  const releaseHeldControls = useCallback(() => {
+    joystickStart.current = null;
+    const held = [...heldControls.current];
+    heldControls.current.clear();
+    held.forEach(([pointerId, element]) => {
+      try { if (element.hasPointerCapture?.(pointerId)) element.releasePointerCapture(pointerId); } catch { /* Contact already ended. */ }
+    });
+    setKnob({ x: 0, y: 0 });
+    send("explore-joystick-contact", { active: false });
+    send("explore-joystick", { x: 0, z: 0 });
+    send("explore-vertical", { y: 0 });
+    send("explore-sprint", { active: false });
+    send("ocean-controls-release");
+  }, []);
+  const controlsTransition = useOceanControlsTransition({
+    enabled: ready && started && !editing && !exiting,
+    reduced: Boolean(reduced), detached: cameraState.detached,
+    releaseInputs: () => { setFiguresOpen(false); releaseHeldControls(); },
+  });
 
   useEffect(() => {
     const depth = (event: Event) => setSubmerged(Boolean((event as CustomEvent<{ underwater: boolean }>).detail.underwater));
@@ -172,9 +193,7 @@ export default function OceanPage() {
       setExiting(true);
       clearTimeout(startTimer.current);
       startTimer.current = undefined;
-      joystickStart.current = null;
-      send("explore-joystick-contact", { active: false });
-      setKnob({ x: 0, y: 0 });
+      releaseHeldControls();
       document.getElementById("global-sky-ocean-bg")?.setAttribute("data-explore", "0");
       send("explore-mode", { enabled: false });
       send("explore-joystick", { x: 0, z: 0 });
@@ -208,7 +227,7 @@ export default function OceanPage() {
       window.removeEventListener("portfolio:ocean-exit", onExit);
       window.removeEventListener("portfolio:ocean-exit-cancel", onCancel);
     };
-  }, [reduced]);
+  }, [reduced, releaseHeldControls]);
 
   useEffect(() => {
     const active = started && !editing && !exiting;
@@ -251,7 +270,8 @@ export default function OceanPage() {
     if (allowJump && !exitingRef.current && joystickStart.current && !joystickStart.current.moved) send("explore-jump");
     joystickStart.current = null; setKnob({ x: 0, y: 0 }); send("explore-joystick-contact", { active: false }); send("explore-joystick", { x: 0, z: 0 });
   };
-  const hold = (event: React.PointerEvent<HTMLButtonElement>, y: number) => { if (exitingRef.current) return; event.currentTarget.setPointerCapture(event.pointerId); send("explore-vertical", { y }); };
+  const hold = (event: React.PointerEvent<HTMLButtonElement>, y: number) => { if (exitingRef.current || controlsTransition.busy()) return; event.currentTarget.setPointerCapture(event.pointerId); heldControls.current.set(event.pointerId, event.currentTarget); send("explore-vertical", { y }); };
+  const releaseVertical = (event: React.PointerEvent<HTMLButtonElement>) => { heldControls.current.delete(event.pointerId); send("explore-vertical", { y: 0 }); };
 
   return (
     <main className={`ocean-page${editing ? " is-editing" : ""}`} style={{ color: content.ocean_text_color ?? (submerged ? "#dcebf1" : content.menu_color) }} aria-busy={exiting} onKeyDownCapture={(event) => { if (exitingRef.current) { event.preventDefault(); event.stopPropagation(); } }}>
@@ -269,19 +289,21 @@ export default function OceanPage() {
         </motion.div>
       </div>}
       {ready && (started || editing) && <>
-        <div data-ocean-control data-blossom className="ocean-tools blossom">{editing ? <>
+        <div data-ocean-control data-blossom className="ocean-tools blossom"><div ref={controlsTransition.tools} className="ocean-tools-inner ocean-controls-scale">{editing ? <>
           <OceanInlineText action label="Testo Exit nella navigazione" value={labels.exit} disabled={saving} onChange={(value) => updateLabel("exit", value)} />
           <OceanInlineText action label="Testo pulsante figura" value={labels.figure} disabled={saving} onChange={(value) => updateLabel("figure", value)} />
-        </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.figure.trim() || DEFAULT_OCEAN_LABELS.figure} data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => setFiguresOpen((current) => !current)}>{labels.figure}</button>{started && cameraState.detached && <button aria-label="Riporta la camera dietro la figura" disabled={cameraState.returning} onClick={() => send("ocean-camera-return")}>Re-Center</button>}{started && activeCharacterKind === "ship" && <button aria-label="Riporta la nave in superficie" onClick={() => { if (exitingRef.current) return; send("ocean-audio-unlock"); send("ocean-ship-surface"); }}>Surface</button>}</>}</div>
+        </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.figure.trim() || DEFAULT_OCEAN_LABELS.figure} data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => setFiguresOpen((current) => !current)}>{labels.figure}</button><AnimatePresence initial={false}>{started && cameraState.detached && <motion.button key="recenter" aria-label="Riporta la camera dietro la figura" disabled={cameraState.returning || controlsTransition.phase !== "visible"} initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 380, damping: 18, mass: .8 }} onClick={controlsTransition.begin}>Re-Center</motion.button>}</AnimatePresence>{started && activeCharacterKind === "ship" && <button aria-label="Riporta la nave in superficie" onClick={() => { if (exitingRef.current || controlsTransition.busy()) return; send("ocean-audio-unlock"); send("ocean-ship-surface"); }}>Surface</button>}</>}</div></div>
         {!editing && <>
         <AnimatePresence>
           {figuresOpen && <motion.section key="figures" id={figuresId} data-ocean-control data-ocean-panel className="ocean-figures" aria-label="Figure del mondo" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}>{characterError && <p role="status">{labels.figuresUnavailable}</p>}{!characters.length && !characterError && <p>{labels.loadingFigures}</p>}{characters.map((character) => <button key={character.id} onClick={() => { setSelectedCharacter(character); setFiguresOpen(false); }}>{character.name}</button>)}</motion.section>}
         </AnimatePresence>
         <div data-ocean-control data-blossom className="ocean-movement blossom">
-          <button className="ocean-movement-descend" aria-label="Scendi" onPointerDown={(event) => hold(event, -1)} onPointerUp={() => send("explore-vertical", { y: 0 })} onPointerCancel={() => send("explore-vertical", { y: 0 })} onLostPointerCapture={() => send("explore-vertical", { y: 0 })}>↓</button>
-          <div role="button" aria-label="Muovi la figura; tocca per saltare" tabIndex={0} className="ocean-joystick" onKeyDown={(event) => { if (event.key === "Enter") send("explore-jump"); }} onPointerDown={(event) => { if (exitingRef.current || joystickStart.current) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); joystickStart.current = { x: event.clientX, y: event.clientY, moved: false, pointerId: event.pointerId }; send("explore-joystick-contact", { active: true, pointerId: event.pointerId }); }} onPointerMove={(event) => { const origin = joystickStart.current; if (!origin || origin.pointerId !== event.pointerId || exitingRef.current) return; const dx = event.clientX - origin.x; const dy = event.clientY - origin.y; if (Math.hypot(dx, dy) > 5) origin.moved = true; const distance = Math.max(1, Math.hypot(dx, dy) / 32); const x = dx / distance; const y = dy / distance; setKnob({ x, y }); send("explore-joystick", { x: x / 32, z: -y / 32 }); }} onPointerUp={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(); }} onPointerCancel={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }} onLostPointerCapture={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }}><span style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} /></div>
-          <button className="ocean-movement-ascend" aria-label="Sali" onPointerDown={(event) => hold(event, 1)} onPointerUp={() => send("explore-vertical", { y: 0 })} onPointerCancel={() => send("explore-vertical", { y: 0 })} onLostPointerCapture={() => send("explore-vertical", { y: 0 })}>↑</button>
-          <button className="ocean-movement-roll-left" aria-label="Ruota a sinistra" onClick={() => send("explore-roll-step", { direction: -1 })}>↶</button><button className="ocean-movement-roll-right" aria-label="Ruota a destra" onClick={() => send("explore-roll-step", { direction: 1 })}>↷</button>
+          <div ref={controlsTransition.movement} className="ocean-movement-inner ocean-controls-scale">
+          <button className="ocean-movement-descend" aria-label="Scendi" onPointerDown={(event) => hold(event, -1)} onPointerUp={releaseVertical} onPointerCancel={releaseVertical} onLostPointerCapture={releaseVertical}>↓</button>
+          <div role="button" aria-label="Muovi la figura; tocca per saltare" tabIndex={0} className="ocean-joystick" onKeyDown={(event) => { if (!controlsTransition.busy() && event.key === "Enter") send("explore-jump"); }} onPointerDown={(event) => { if (exitingRef.current || controlsTransition.busy() || joystickStart.current) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); heldControls.current.set(event.pointerId, event.currentTarget); joystickStart.current = { x: event.clientX, y: event.clientY, moved: false, pointerId: event.pointerId }; send("explore-joystick-contact", { active: true, pointerId: event.pointerId }); }} onPointerMove={(event) => { const origin = joystickStart.current; if (!origin || origin.pointerId !== event.pointerId || exitingRef.current || controlsTransition.busy()) return; const dx = event.clientX - origin.x; const dy = event.clientY - origin.y; if (Math.hypot(dx, dy) > 5) origin.moved = true; const distance = Math.max(1, Math.hypot(dx, dy) / 32); const x = dx / distance; const y = dy / distance; setKnob({ x, y }); send("explore-joystick", { x: x / 32, z: -y / 32 }); }} onPointerUp={(event) => { heldControls.current.delete(event.pointerId); if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(); }} onPointerCancel={(event) => { heldControls.current.delete(event.pointerId); if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }} onLostPointerCapture={(event) => { heldControls.current.delete(event.pointerId); if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }}><span style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} /></div>
+          <button className="ocean-movement-ascend" aria-label="Sali" onPointerDown={(event) => hold(event, 1)} onPointerUp={releaseVertical} onPointerCancel={releaseVertical} onLostPointerCapture={releaseVertical}>↑</button>
+          <button className="ocean-movement-roll-left" aria-label="Ruota a sinistra" onClick={() => { if (!exitingRef.current && !controlsTransition.busy()) send("explore-roll-step", { direction: -1 }); }}>↶</button><button className="ocean-movement-roll-right" aria-label="Ruota a destra" onClick={() => { if (!exitingRef.current && !controlsTransition.busy()) send("explore-roll-step", { direction: 1 }); }}>↷</button>
+          </div>
         </div>
         </>}
       </>}
