@@ -81,11 +81,15 @@ globalThis.document ??= {
   createElementNS: () => new NodeCanvas(),
 };
 
+const OCEAN_WATERLINE_Y = -1.35;
 const scene = new THREE.Scene();
 scene.name = "Studierzimmer_Pirate_Sailing_Ship";
+// Authored hull waterline, before the owner's external model_scale is applied.
+scene.userData.oceanWaterlineY = OCEAN_WATERLINE_Y;
 
 const ship = new THREE.Group();
 ship.name = "Pirate_Sailing_Ship";
+ship.userData.oceanWaterlineY = OCEAN_WATERLINE_Y;
 scene.add(ship);
 
 function createNormalTexture(name, size, heightAt, repeatX, repeatY, strength) {
@@ -243,25 +247,25 @@ const jollyRogerTexture = createJollyRogerTexture();
 const materials = {
   hull: new THREE.MeshPhysicalMaterial({
     name: "Hull_Warm_Wood",
-    color: 0x4a392d,
-    roughness: 0.54,
+    color: 0x5b4633,
+    roughness: 0.74,
     metalness: 0.02,
-    clearcoat: 0.2,
-    clearcoatRoughness: 0.64,
+    clearcoat: 0.07,
+    clearcoatRoughness: 0.82,
     normalMap: hullNormal,
-    normalScale: new THREE.Vector2(0.72, 0.72),
-    side: THREE.DoubleSide,
+    normalScale: new THREE.Vector2(0.26, 0.32),
+    side: THREE.FrontSide,
   }),
   lowerHull: new THREE.MeshPhysicalMaterial({
     name: "Lower_Hull_Carene",
-    color: 0x30312e,
-    roughness: 0.6,
+    color: 0x484033,
+    roughness: 0.83,
     metalness: 0.015,
-    clearcoat: 0.14,
-    clearcoatRoughness: 0.72,
+    clearcoat: 0.035,
+    clearcoatRoughness: 0.9,
     normalMap: hullNormal,
-    normalScale: new THREE.Vector2(0.58, 0.58),
-    side: THREE.DoubleSide,
+    normalScale: new THREE.Vector2(0.22, 0.28),
+    side: THREE.FrontSide,
   }),
   darkWood: new THREE.MeshPhysicalMaterial({
     name: "Dark_Wood",
@@ -285,6 +289,9 @@ const materials = {
     color: 0xa77b36,
     roughness: 0.36,
     metalness: 0.62,
+  }),
+  iron: new THREE.MeshStandardMaterial({
+    name: "Aged_Iron_Fittings", color: 0x272925, roughness: 0.8, metalness: 0.48,
   }),
   sail: new THREE.MeshPhysicalMaterial({
     name: "Warm_White_Sails",
@@ -347,174 +354,115 @@ const HULL_STATIONS = [
   { z: 10.8, width: 0.08, sheer: 2.3, depth: 1.28 },
 ];
 
-function hullGeometry() {
-  const crossSegments = 24;
-  const stations = HULL_STATIONS;
-  const positions = [];
-  const uvs = [];
-  const indices = [];
-
-  stations.forEach((station, stationIndex) => {
-    for (let index = 0; index <= crossSegments; index += 1) {
-      const angle = Math.PI + (index / crossSegments) * Math.PI;
-      const bottomRound = Math.sin((index / crossSegments) * Math.PI);
-      positions.push(
-        Math.cos(angle) * station.width,
-        station.sheer - bottomRound * station.depth,
-        station.z
-      );
-      uvs.push(
-        stationIndex / (stations.length - 1),
-        index / crossSegments
-      );
-    }
-  });
-
-  const ringSize = crossSegments + 1;
-  for (
-    let stationIndex = 0;
-    stationIndex < stations.length - 1;
-    stationIndex += 1
-  ) {
-    for (let index = 0; index < crossSegments; index += 1) {
-      const a = stationIndex * ringSize + index;
-      const b = a + 1;
-      const d = (stationIndex + 1) * ringSize + index;
-      const c = d + 1;
-      // The cross-section runs from port gunwale, around the keel, to
-      // starboard. Keep the side triangles counter-clockwise when viewed
-      // from outside so lighting and normal maps never flip into the hull.
-      indices.push(a, b, d, b, c, d);
-    }
-  }
-
-  for (const stationIndex of [0, stations.length - 1]) {
-    const station = stations[stationIndex];
-    const centerIndex = positions.length / 3;
-    positions.push(0, station.sheer - station.depth * 0.48, station.z);
-    uvs.push(stationIndex === 0 ? 0 : 1, 0.5);
-    for (let index = 0; index < crossSegments; index += 1) {
-      const a = stationIndex * ringSize + index;
-      const b = a + 1;
-      if (stationIndex === 0) indices.push(centerIndex, b, a);
-      else indices.push(centerIndex, a, b);
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3)
-  );
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  geometry.normalizeNormals();
-  return geometry;
+function stationValue(z, key) {
+  let index = 0;
+  while (index < HULL_STATIONS.length - 2 && z > HULL_STATIONS[index + 1].z) index += 1;
+  const first = HULL_STATIONS[index], second = HULL_STATIONS[index + 1];
+  const before = HULL_STATIONS[Math.max(0, index - 1)], after = HULL_STATIONS[Math.min(HULL_STATIONS.length - 1, index + 2)];
+  const length = second.z - first.z, t = THREE.MathUtils.clamp((z - first.z) / length, 0, 1);
+  const firstSlope = (second[key] - before[key]) / (second.z - before.z);
+  const secondSlope = (after[key] - first[key]) / (after.z - first.z);
+  return (2 * t ** 3 - 3 * t ** 2 + 1) * first[key] + (t ** 3 - 2 * t ** 2 + t) * length * firstSlope
+    + (-2 * t ** 3 + 3 * t ** 2) * second[key] + (t ** 3 - t ** 2) * length * secondSlope;
 }
 
-function lowerHullGeometry() {
-  const crossSegments = 20;
-  const startFraction = 0.16;
-  const endFraction = 0.84;
-  const positions = [];
-  const uvs = [];
-  const indices = [];
+function sampledStation(z) {
+  const sheer = stationValue(z, "sheer");
+  return { z, width: Math.max(.035, stationValue(z, "width")), top: Math.max(1.32, sheer), bottom: sheer - stationValue(z, "depth") + .27 };
+}
 
-  HULL_STATIONS.forEach((station, stationIndex) => {
+const HULL_SAMPLES = Array.from({ length: 97 }, (_, index) => sampledStation(THREE.MathUtils.lerp(HULL_STATIONS[0].z, HULL_STATIONS.at(-1).z, index / 96)));
+// Full bilges, a fine rising floor, and genuine tumblehome above the waterline.
+// Unlike an ellipse, the greatest beam lies below the narrowed upper sides.
+const SECTION = [
+  [0, .94, 1], [.14, 1, .88], [.28, 1.025, .74], [.45, 1.01, .52],
+  [.62, .88, .31], [.78, .61, .14], [.9, .31, .045], [1, 0, 0],
+];
+
+function sectionValue(amount, column) {
+  let index = 0;
+  while (index < SECTION.length - 2 && amount > SECTION[index + 1][0]) index += 1;
+  const first = SECTION[index], second = SECTION[index + 1];
+  const before = SECTION[Math.max(0, index - 1)], after = SECTION[Math.min(SECTION.length - 1, index + 2)];
+  const length = second[0] - first[0], t = THREE.MathUtils.clamp((amount - first[0]) / length, 0, 1);
+  const slope0 = (second[column] - before[column]) / (second[0] - before[0]);
+  const slope1 = (after[column] - first[column]) / (after[0] - first[0]);
+  const value = (2 * t ** 3 - 3 * t ** 2 + 1) * first[column] + (t ** 3 - 2 * t ** 2 + t) * length * slope0
+    + (-2 * t ** 3 + 3 * t ** 2) * second[column] + (t ** 3 - t ** 2) * length * slope1;
+  return THREE.MathUtils.clamp(value, Math.min(first[column], second[column]), Math.max(first[column], second[column]));
+}
+
+function hullPoint(station, fraction) {
+  const side = fraction <= .5 ? -1 : 1;
+  const amount = fraction <= .5 ? fraction * 2 : (1 - fraction) * 2;
+  return new THREE.Vector3(side * station.width * sectionValue(amount, 1), THREE.MathUtils.lerp(station.bottom, station.top, sectionValue(amount, 2)), station.z);
+}
+
+function halfBeamAtHeight(z, y) {
+  const station = sampledStation(z);
+  let low = 0, high = 1;
+  for (let step = 0; step < 24; step += 1) {
+    const amount = (low + high) / 2;
+    if (THREE.MathUtils.lerp(station.bottom, station.top, sectionValue(amount, 2)) > y) low = amount;
+    else high = amount;
+  }
+  return station.width * sectionValue((low + high) / 2, 1);
+}
+
+function hullGeometry() {
+  const crossSegments = 56, ringSize = crossSegments + 1;
+  const positions = [], uvs = [], upper = [], lower = [];
+  HULL_SAMPLES.forEach((station, stationIndex) => {
     for (let index = 0; index <= crossSegments; index += 1) {
-      const amount = index / crossSegments;
-      const crossFraction = THREE.MathUtils.lerp(
-        startFraction,
-        endFraction,
-        amount
-      );
-      const angle = Math.PI + crossFraction * Math.PI;
-      positions.push(
-        Math.cos(angle) * (station.width + 0.025),
-        station.sheer -
-          Math.sin(crossFraction * Math.PI) * (station.depth + 0.025),
-        station.z
-      );
-      uvs.push(
-        stationIndex / (HULL_STATIONS.length - 1),
-        amount
-      );
+      positions.push(...hullPoint(station, index / crossSegments).toArray());
+      uvs.push(stationIndex / (HULL_SAMPLES.length - 1), index / crossSegments);
     }
   });
-
-  const ringSize = crossSegments + 1;
-  for (
-    let stationIndex = 0;
-    stationIndex < HULL_STATIONS.length - 1;
-    stationIndex += 1
-  ) {
+  const triangle = (a, b, c) => {
+    const y = (positions[a * 3 + 1] + positions[b * 3 + 1] + positions[c * 3 + 1]) / 3;
+    (y < OCEAN_WATERLINE_Y ? lower : upper).push(a, b, c);
+  };
+  for (let stationIndex = 0; stationIndex < HULL_SAMPLES.length - 1; stationIndex += 1) {
     for (let index = 0; index < crossSegments; index += 1) {
-      const a = stationIndex * ringSize + index;
-      const b = a + 1;
-      const d = (stationIndex + 1) * ringSize + index;
-      const c = d + 1;
-      indices.push(a, b, d, b, c, d);
+      const a = stationIndex * ringSize + index, b = a + 1, d = (stationIndex + 1) * ringSize + index, c = d + 1;
+      triangle(a, b, d); triangle(b, c, d);
+    }
+    // Seal the upper edge as well as both ends: the hull is a solid volume,
+    // not an open bowl covered by another transparent/double-sided skin.
+    const a = stationIndex * ringSize, b = a + crossSegments, c = b + ringSize, d = a + ringSize;
+    triangle(a, d, b); triangle(b, d, c);
+  }
+  for (const stationIndex of [0, HULL_SAMPLES.length - 1]) {
+    const station = HULL_SAMPLES[stationIndex], center = positions.length / 3;
+    positions.push(0, (station.top + station.bottom) / 2, station.z); uvs.push(stationIndex === 0 ? 0 : 1, .5);
+    for (let index = 0; index <= crossSegments; index += 1) {
+      const a = stationIndex * ringSize + index, b = stationIndex * ringSize + (index + 1) % ringSize;
+      if (stationIndex === 0) triangle(center, b, a); else triangle(center, a, b);
     }
   }
-
-  // Close the bow and transom portions of the lower hull so it remains a
-  // solid carene when the ship rolls or rises above the water.
-  for (const stationIndex of [0, HULL_STATIONS.length - 1]) {
-    const station = HULL_STATIONS[stationIndex];
-    const centerIndex = positions.length / 3;
-    positions.push(
-      0,
-      station.sheer - station.depth * 0.68,
-      station.z
-    );
-    uvs.push(stationIndex === 0 ? 0 : 1, 0.5);
-    for (let index = 0; index < crossSegments; index += 1) {
-      const a = stationIndex * ringSize + index;
-      const b = a + 1;
-      if (stationIndex === 0) indices.push(centerIndex, b, a);
-      else indices.push(centerIndex, a, b);
-    }
-  }
-
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3)
-  );
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  geometry.normalizeNormals();
+  geometry.setIndex([...upper, ...lower]);
+  geometry.addGroup(0, upper.length, 0); geometry.addGroup(upper.length, lower.length, 1);
+  geometry.computeVertexNormals(); geometry.normalizeNormals();
   return geometry;
 }
 
 function addHullStrake(name, side, depthFraction, material, radius = 0.032) {
-  const points = HULL_STATIONS.slice(1, -1).map((station) => {
-    const crossFraction =
-      side < 0 ? depthFraction : 1 - depthFraction;
-    const angle = Math.PI + crossFraction * Math.PI;
-    return new THREE.Vector3(
-      Math.cos(angle) * station.width,
-      station.sheer - Math.sin(depthFraction * Math.PI) * station.depth,
-      station.z
-    );
+  const points = HULL_SAMPLES.filter((_, index) => index > 2 && index < 94 && index % 4 === 0).map((station) => {
+    const point = hullPoint(station, side < 0 ? depthFraction : 1 - depthFraction);
+    point.x += Math.sign(point.x) * .012;
+    return point;
   });
   addTubeCurve(name, points, radius, material);
 }
 
 function addHullLine(name, side, yOffset, material, radius = 0.055) {
-  const points = [
-    [-2.35, 1.15, -9.15],
-    [-3.48, 0.92, -6],
-    [-3.66, 0.78, -1.5],
-    [-3.42, 0.9, 3.2],
-    [-2.6, 1.22, 6.7],
-    [-0.6, 1.86, 9.85],
-  ].map(
-    ([x, y, z]) =>
-      new THREE.Vector3(Number(x) * side, Number(y) + yOffset, Number(z))
-  );
+  const points = HULL_SAMPLES.filter((_, index) => index > 2 && index < 94 && index % 4 === 0).map((station) => {
+    const y = station.top + yOffset;
+    return new THREE.Vector3(side * (halfBeamAtHeight(station.z, y) + radius * .45), y, station.z);
+  });
   const curve = new THREE.CatmullRomCurve3(points);
   const mesh = new THREE.Mesh(
     new THREE.TubeGeometry(curve, 80, radius, 6, false),
@@ -526,16 +474,9 @@ function addHullLine(name, side, yOffset, material, radius = 0.055) {
 
 function deckShape() {
   const shape = new THREE.Shape();
-  shape.moveTo(0, 10.55);
-  shape.bezierCurveTo(1.85, 9.7, 3.18, 7.1, 3.58, 3.8);
-  shape.bezierCurveTo(3.95, 0.4, 3.86, -4.2, 3.18, -7.65);
-  shape.bezierCurveTo(2.94, -8.95, 2.62, -9.58, 2.25, -9.72);
-  // A real transom closes the stern. The previous pointed return formed an
-  // open V that exposed the interior when viewed from behind or at waterline.
-  shape.lineTo(-2.25, -9.72);
-  shape.bezierCurveTo(-2.62, -9.58, -2.94, -8.95, -3.18, -7.65);
-  shape.bezierCurveTo(-3.86, -4.2, -3.95, 0.4, -3.58, 3.8);
-  shape.bezierCurveTo(-3.18, 7.1, -1.85, 9.7, 0, 10.55);
+  shape.moveTo(-HULL_SAMPLES[0].width * .94, HULL_SAMPLES[0].z);
+  HULL_SAMPLES.slice(1).forEach((station) => shape.lineTo(-station.width * .94, station.z));
+  [...HULL_SAMPLES].reverse().forEach((station) => shape.lineTo(station.width * .94, station.z));
   shape.closePath();
   return shape;
 }
@@ -552,23 +493,22 @@ function horizontalDeckGeometry() {
   // ShapeGeometry's Y axis becomes the ship's +Z axis. This keeps the
   // pointed bow aligned with the movement direction instead of the stern.
   geometry.rotateX(Math.PI / 2);
+  const points = geometry.getAttribute("position");
+  for (let index = 0; index < points.count; index += 1) points.setY(index, points.getY(index) + sampledStation(points.getZ(index)).top - 1.32);
   geometry.computeVertexNormals();
   return geometry;
 }
 
 function sternTransomGeometry() {
-  const station = HULL_STATIONS[0];
+  const station = HULL_SAMPLES[0];
   const shape = new THREE.Shape();
-  shape.moveTo(-station.width, station.sheer);
+  shape.moveTo(-station.width * .94, station.top);
   for (let index = 1; index <= 32; index += 1) {
     const amount = index / 32;
-    const angle = Math.PI + amount * Math.PI;
-    shape.lineTo(
-      Math.cos(angle) * station.width,
-      station.sheer - Math.sin(amount * Math.PI) * station.depth
-    );
+    const point = hullPoint(station, amount);
+    shape.lineTo(point.x, point.y);
   }
-  shape.lineTo(-station.width, station.sheer);
+  shape.lineTo(-station.width * .94, station.top);
   shape.closePath();
 
   const geometry = new THREE.ExtrudeGeometry(shape, {
@@ -584,34 +524,34 @@ function sternTransomGeometry() {
   return geometry;
 }
 
-function taperedCabinGeometry() {
-  const bottom = { width: 5.35, depth: 3.5, y: 0 };
-  const top = { width: 4.75, depth: 3.05, y: 2.1 };
-  const vertices = [
-    -bottom.width / 2, bottom.y, -bottom.depth / 2,
-    bottom.width / 2, bottom.y, -bottom.depth / 2,
-    bottom.width / 2, bottom.y, bottom.depth / 2,
-    -bottom.width / 2, bottom.y, bottom.depth / 2,
-    -top.width / 2, top.y, -top.depth / 2,
-    top.width / 2, top.y, -top.depth / 2,
-    top.width / 2, top.y, top.depth / 2,
-    -top.width / 2, top.y, top.depth / 2,
-  ];
-  const indices = [
-    // Rear, starboard, front and port faces, all wound from the exterior.
-    0, 4, 1, 1, 4, 5,
-    1, 5, 2, 2, 5, 6,
-    2, 6, 3, 3, 6, 7,
-    3, 7, 0, 0, 7, 4,
-    // Roof and floor close the cabin as a watertight volume.
-    4, 7, 5, 5, 7, 6,
-    0, 1, 3, 1, 2, 3,
-  ];
+function castleLoftGeometry(sections) {
+  const vertices = [], indices = [], uvs = [];
+  sections.forEach((section, index) => {
+    vertices.push(-section.baseWidth, section.bottom, section.z, -section.topWidth, section.top, section.z,
+      section.topWidth, section.top, section.z, section.baseWidth, section.bottom, section.z);
+    for (let side = 0; side < 4; side += 1) uvs.push(index / (sections.length - 1), side / 3);
+  });
+  for (let station = 0; station < sections.length - 1; station += 1) for (let edge = 0; edge < 4; edge += 1) {
+    const a = station * 4 + edge, b = station * 4 + (edge + 1) % 4, d = (station + 1) * 4 + edge, c = (station + 1) * 4 + (edge + 1) % 4;
+    indices.push(a, b, d, b, c, d);
+  }
+  for (const station of [0, sections.length - 1]) {
+    const section = sections[station], center = vertices.length / 3;
+    vertices.push(0, (section.bottom + section.top) / 2, section.z); uvs.push(station === 0 ? 0 : 1, .5);
+    for (let edge = 0; edge < 4; edge += 1) {
+      const a = station * 4 + edge, b = station * 4 + (edge + 1) % 4;
+      if (station === 0) indices.push(center, b, a); else indices.push(center, a, b);
+    }
+  }
+  let volume = 0;
+  for (let index = 0; index < indices.length; index += 3) {
+    const a = new THREE.Vector3().fromArray(vertices, indices[index] * 3), b = new THREE.Vector3().fromArray(vertices, indices[index + 1] * 3), c = new THREE.Vector3().fromArray(vertices, indices[index + 2] * 3);
+    volume += a.dot(b.cross(c)) / 6;
+  }
+  if (volume < 0) for (let index = 0; index < indices.length; index += 3) [indices[index + 1], indices[index + 2]] = [indices[index + 2], indices[index + 1]];
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(vertices, 3)
-  );
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   geometry.normalizeNormals();
@@ -981,13 +921,21 @@ function addSail(name, width, height, position, mastZ, yTop) {
   }
 }
 
-const hull = new THREE.Mesh(hullGeometry(), materials.hull);
+function timberGeometry(profile, thickness, exactBottom = null) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-profile[0][0], profile[0][1]);
+  profile.slice(1).forEach(([z, y]) => shape.lineTo(-z, y));
+  shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelSize: .018, bevelThickness: .012, bevelSegments: 2, curveSegments: 24 });
+  geometry.rotateY(Math.PI / 2); geometry.translate(-thickness / 2, 0, 0);
+  if (exactBottom !== null) { geometry.computeBoundingBox(); geometry.translate(0, exactBottom - geometry.boundingBox.min.y, 0); }
+  geometry.computeVertexNormals(); geometry.normalizeNormals();
+  return geometry;
+}
+
+const hull = new THREE.Mesh(hullGeometry(), [materials.hull, materials.lowerHull]);
 hull.name = "Hull";
 ship.add(hull);
-
-const lowerHull = new THREE.Mesh(lowerHullGeometry(), materials.lowerHull);
-lowerHull.name = "Lower_Hull_Carene";
-ship.add(lowerHull);
 
 const sternTransom = new THREE.Mesh(sternTransomGeometry(), materials.hull);
 sternTransom.name = "Closed_Stern_Transom";
@@ -1003,6 +951,8 @@ ship.add(deck);
 // closed wooden volume even at grazing angles and through the waterline.
 const deckTopGeometry = new THREE.ShapeGeometry(deckShape(), 64);
 deckTopGeometry.rotateX(Math.PI / 2);
+const deckTopVertices = deckTopGeometry.getAttribute("position");
+for (let index = 0; index < deckTopVertices.count; index += 1) deckTopVertices.setY(index, deckTopVertices.getY(index) + sampledStation(deckTopVertices.getZ(index)).top - 1.32);
 const deckTopIndex = deckTopGeometry.getIndex();
 if (deckTopIndex) {
   for (let index = 0; index < deckTopIndex.count; index += 3) {
@@ -1045,15 +995,29 @@ for (const side of [-1, 1]) {
   }
 }
 
-const keelPoints = HULL_STATIONS.slice(1).map(
-  (station) =>
-    new THREE.Vector3(
-      0,
-      station.sheer - station.depth - 0.11,
-      station.z
-    )
-);
-addTubeCurve("Sculpted_Keel", keelPoints, 0.22, materials.lowerHull);
+// A longitudinal oak-like timber backbone, with a flat keel, rising forefoot
+// and raked sternpost. It is a solid profiled timber, never a round tube/board.
+const keelProfile = [-8.55, -7.5, -5.2, -2.3, .8, 3.6, 5.9, 7.7, 8.25].map((z) => [z, sampledStation(z).bottom + .12]);
+keelProfile.push([8.25, -1.8], [7.7, -2.25], [5.9, -2.92], [3.6, -3.34], [.8, -3.36], [-2.3, -3.36], [-5.2, -3.36], [-7.5, -3.08], [-8.55, -2.48]);
+const keel = new THREE.Mesh(timberGeometry(keelProfile, .34, -3.3773207664489746), materials.lowerHull);
+keel.name = "Sculpted_Keel"; ship.add(keel);
+
+const stem = new THREE.Mesh(timberGeometry([
+  [7.6, -1.75], [8.15, -1.45], [8.7, -.89], [9.25, -.18], [9.8, .83], [10.45, 2.2],
+  [10.8, 2.64], [11.03, 2.58], [10.67, 1.46], [10.18, .27], [9.55, -.96], [8.7, -1.92], [7.8, -2.35],
+], .36), materials.hull);
+stem.name = "Stem_Timber"; ship.add(stem);
+
+const sternpost = new THREE.Mesh(timberGeometry([[-9.53, 1.7], [-8.36, -2.93], [-8.64, -3.12], [-9.8, 1.66]], .32), materials.lowerHull);
+sternpost.name = "Sternpost_Timber"; ship.add(sternpost);
+
+const rudder = new THREE.Mesh(timberGeometry([[-9.8, 1.1], [-8.62, -3.1], [-9.53, -3.22], [-9.87, -2.72], [-9.91, .7]], .2), materials.darkWood);
+rudder.name = "Sternpost_Rudder"; ship.add(rudder);
+for (const [index, y] of [-2.5, -1.05, .5].entries()) {
+  const z = THREE.MathUtils.lerp(-8.62, -9.8, (y + 3.1) / 4.2);
+  addBox(`Rudder_Gudgeon_${index + 1}`, [.5, .105, .37], [0, y, z + .08], materials.iron);
+  addCylinderBetween(`Rudder_Pintle_${index + 1}`, new THREE.Vector3(0, y - .16, z), new THREE.Vector3(0, y + .16, z), .065, materials.iron, 8);
+}
 
 for (const x of [-2.5, -1.65, -0.82, 0, 0.82, 1.65, 2.5]) {
   addCylinderBetween(
@@ -1066,37 +1030,58 @@ for (const x of [-2.5, -1.65, -0.82, 0, 0.82, 1.65, 2.5]) {
   );
 }
 
-const cabin = new THREE.Mesh(taperedCabinGeometry(), materials.darkWood);
-cabin.name = "Tapered_Stern_Cabin";
-cabin.position.set(0, 1.22, -6.55);
-ship.add(cabin);
-addBox("Stern_Cabin_Roof", [5.1, 0.18, 3.45], [0, 3.42, -6.55], materials.deck);
+function interpolateCastle(sections, z, key) {
+  let index = 0;
+  while (index < sections.length - 2 && z > sections[index + 1].z) index += 1;
+  const first = sections[index], second = sections[index + 1];
+  return THREE.MathUtils.lerp(first[key], second[key], THREE.MathUtils.clamp((z - first.z) / (second.z - first.z), 0, 1));
+}
 
-for (const x of [-1.55, -0.52, 0.52, 1.55]) {
-  const windowMesh = new THREE.Mesh(
-    new THREE.CircleGeometry(0.29, 20),
-    materials.glass
-  );
-  windowMesh.name = `Stern_Window_${String(x).replace(".", "_")}`;
-  windowMesh.position.set(x, 2.32, -8.095);
-  ship.add(windowMesh);
-  const windowRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.31, 0.045, 6, 20),
-    materials.brass
-  );
-  windowRing.name = `${windowMesh.name}_Brass_Ring`;
-  windowRing.position.copy(windowMesh.position);
-  windowRing.position.z -= 0.018;
-  ship.add(windowRing);
+const quarterdeckSections = [[-9.78, 3.82], [-9.1, 3.78], [-8.1, 3.58], [-6.5, 3.16], [-5.35, 2.78], [-4.9, 2.62]].map(([z, top]) => {
+  const station = sampledStation(z), baseWidth = station.width * .94 + .025;
+  return { z, top, bottom: station.top - .07, baseWidth, topWidth: baseWidth * .9 };
+});
+const poopSections = [[-9.8, 5.06], [-9.2, 4.99], [-8.25, 4.82], [-7.15, 4.56]].map(([z, top]) => {
+  const baseWidth = interpolateCastle(quarterdeckSections, z, "topWidth") - .02;
+  return { z, top, bottom: interpolateCastle(quarterdeckSections, z, "top") - .045, baseWidth, topWidth: baseWidth * .88 };
+});
+const forecastleSections = [[5.35, 2.28], [6.7, 2.54], [8.1, 2.84], [9.4, 3.06], [10.45, 3.14]].map(([z, top]) => {
+  const station = sampledStation(z), baseWidth = station.width * .94 + .015;
+  return { z, top, bottom: station.top - .05, baseWidth, topWidth: baseWidth * .89 };
+});
+for (const [name, sections] of [["Integrated_Quarterdeck_Castle", quarterdeckSections], ["Raised_Poop_Castle", poopSections], ["Raised_Forecastle", forecastleSections]]) {
+  const body = new THREE.Mesh(castleLoftGeometry(sections), materials.hull); body.name = name; ship.add(body);
+  const deckSections = sections.map((section) => ({ ...section, bottom: section.top - .045, top: section.top + .035, baseWidth: section.topWidth + .035, topWidth: section.topWidth + .035 }));
+  const deck = new THREE.Mesh(castleLoftGeometry(deckSections), materials.deck); deck.name = `${name}_Deck`; ship.add(deck);
+  for (const side of [-1, 1]) {
+    addTubeCurve(`${name}_${side < 0 ? "Port" : "Starboard"}_Timber_Cap`, sections.map((section) => new THREE.Vector3(side * section.topWidth, section.top + .13, section.z)), .055, materials.darkWood);
+  }
+}
+for (let step = 0; step < 6; step += 1) addBox(`Quarterdeck_Stair_${step + 1}`, [1.35, .18, .32], [0, 1.41 + step * .205, -3.35 - step * .27], materials.deck);
+for (let step = 0; step < 5; step += 1) addBox(`Poop_Stair_${step + 1}`, [1.15, .17, .25], [.7, 3.2 + step * .25, -6.04 - step * .23], materials.deck);
+
+for (const y of [2.76, 4.42]) for (const [index, x] of [-1.17, -.39, .39, 1.17].entries()) {
+  const prefix = `Stern_Rectangular_Window_${y}_${index + 1}`;
+  addBox(`${prefix}_Recess`, [.59, .58, .055], [x, y, -9.875], materials.darkWood);
+  addBox(`${prefix}_Glass`, [.43, .42, .025], [x, y, -9.913], materials.glass);
+  addBox(`${prefix}_Mullion`, [.035, .43, .035], [x, y, -9.93], materials.darkWood);
+}
+addBox("Stern_Gallery_Ledge", [4.15, .10, .48], [0, 3.82, -9.65], materials.deck);
+
+function upperDeckAt(z) {
+  if (z <= -7.15) return interpolateCastle(poopSections, z, "top");
+  if (z <= -4.9) return interpolateCastle(quarterdeckSections, z, "top");
+  if (z >= 5.35) return interpolateCastle(forecastleSections, z, "top");
+  return sampledStation(z).top;
 }
 
 for (const side of [-1, 1]) {
   const railPoints = [
-    new THREE.Vector3(2.25 * side, 2.05, -8.8),
-    new THREE.Vector3(3.25 * side, 1.9, -5.1),
-    new THREE.Vector3(3.4 * side, 1.75, -0.5),
-    new THREE.Vector3(3.0 * side, 1.95, 5.2),
-    new THREE.Vector3(1.3 * side, 2.48, 8.85),
+    new THREE.Vector3(2.25 * side, upperDeckAt(-8.8) + .62, -8.8),
+    new THREE.Vector3(3.25 * side, upperDeckAt(-5.1) + .62, -5.1),
+    new THREE.Vector3(3.4 * side, upperDeckAt(-.5) + .62, -.5),
+    new THREE.Vector3(3.0 * side, upperDeckAt(5.2) + .62, 5.2),
+    new THREE.Vector3(1.3 * side, upperDeckAt(8.85) + .62, 8.85),
   ];
   addTubeCurve(
     side < 0 ? "Port_Upper_Rail" : "Starboard_Upper_Rail",
@@ -1109,8 +1094,8 @@ for (const side of [-1, 1]) {
     const x = side * (3.25 - Math.max(0, Math.abs(z) - 5) * 0.22) * taper;
     addCylinderBetween(
       `${side < 0 ? "Port" : "Starboard"}_Rail_Post_${z}`,
-      new THREE.Vector3(x, 1.35, z),
-      new THREE.Vector3(x, 1.92, z),
+      new THREE.Vector3(x, upperDeckAt(z) + .04, z),
+      new THREE.Vector3(x, upperDeckAt(z) + .62, z),
       0.035,
       materials.darkWood,
       5
@@ -1120,6 +1105,7 @@ for (const side of [-1, 1]) {
 
 for (let index = -2; index <= 2; index += 1) {
   const z = index * 2.35;
+  const beam = halfBeamAtHeight(z, .32);
   for (const side of [-1, 1]) {
     const gunPort = new THREE.Mesh(
       new THREE.BoxGeometry(0.13, 0.52, 0.62),
@@ -1128,21 +1114,28 @@ for (let index = -2; index <= 2; index += 1) {
     gunPort.name = `${
       side < 0 ? "Port" : "Starboard"
     }_Gun_Port_${index + 3}`;
-    gunPort.position.set(side * 3.66, 0.32, z);
+    gunPort.position.set(side * (beam + .035), 0.32, z);
     ship.add(gunPort);
+    const prefix = `${side < 0 ? "Port" : "Starboard"}_Gun_${index + 3}`;
+    for (const offset of [-.29, .29]) addBox(`${prefix}_Vertical_Frame_${offset}`, [.10, .57, .055], [side * (beam + .07), .32, z + offset], materials.hull);
+    for (const offset of [-.26, .26]) addBox(`${prefix}_Horizontal_Frame_${offset}`, [.10, .055, .64], [side * (beam + .07), .32 + offset, z], materials.hull);
+    const lid = new THREE.Group(); lid.name = `${prefix}_Hinged_Wood_Lid`; lid.position.set(side * (beam + .07), .60, z); lid.rotation.z = side * 1.1;
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(.055, .48, .58), materials.hull); panel.name = `${prefix}_Lid_Panel`; panel.position.y = -.24; lid.add(panel); ship.add(lid);
+    addCylinderBetween(`${prefix}_Iron_Hinge`, new THREE.Vector3(side * (beam + .075), .60, z - .29), new THREE.Vector3(side * (beam + .075), .60, z + .29), .032, materials.iron, 6);
+    const muzzle = new THREE.Mesh(new THREE.CircleGeometry(.089, 12), materials.iron); muzzle.name = `${prefix}_Dark_Muzzle`; muzzle.rotation.y = side * Math.PI / 2; muzzle.position.set(side * (beam + .31), .32, z); ship.add(muzzle);
   }
   addCylinderBetween(
     `Port_Cannon_${index + 3}`,
-    new THREE.Vector3(-3.28, 0.32, z),
-    new THREE.Vector3(-4.05, 0.32, z),
+    new THREE.Vector3(-beam + .4, 0.32, z),
+    new THREE.Vector3(-beam - .30, 0.32, z),
     0.13,
     materials.brass,
     10
   );
   addCylinderBetween(
     `Starboard_Cannon_${index + 3}`,
-    new THREE.Vector3(3.28, 0.32, z),
-    new THREE.Vector3(4.05, 0.32, z),
+    new THREE.Vector3(beam - .4, 0.32, z),
+    new THREE.Vector3(beam + .30, 0.32, z),
     0.13,
     materials.brass,
     10

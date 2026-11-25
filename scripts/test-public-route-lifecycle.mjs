@@ -39,7 +39,21 @@ assert.ok(![...visited].some((name) => /(?:SkyOceanBackground|OceanPage|PublicBo
 const app = read("src/App.tsx");
 assert.match(app, /PublicBookLibrary = lazy\(/);
 assert.match(app, /Index = lazy\(loadOceanPage\)/);
-assert.match(app, /if \(destination\.pathname === "\/navigate"\)/);
+assert.match(app, /const loadOceanPage = loadPreparedOceanPage;/, "the route waits for the shared parsed asset cache, not only a downloaded module");
+assert.match(app, /const ocean = destination\.pathname === "\/navigate";/);
+assert.match(app, /setOceanPreloadIntent\(ocean\)/, "route cancellation clears foreground ownership without discarding shared downloads");
+assert.match(app, /if \(ocean\) void preloadOceanExperience\(\{ intent: true \}\)/, "direct/admin Ocean entry explicitly starts the same deduplicated preparation");
+assert.match(app, /OceanLoadingOverlay active=\{destination\.pathname === "\/navigate"\}/, "the loading portal survives Home unmount and is absent on other destinations");
+const home = read("src/pages/PortfolioHome.tsx");
+assert.match(home, /if \(splash \|\| editing \|\| !oceanAvailable/, "splash and editor never start background warming");
+assert.match(home, /scheduleOceanPreload\(menu\.current\)/, "interactive Home schedules the lightweight idle warmup");
+const warmup = read("src/lib/oceanPreload.ts");
+assert.match(warmup, /animation\.finished\.catch/, "idle warming follows actual menu animation completion");
+assert.match(warmup, /requestIdleCallback/);
+assert.match(warmup, /network\?\.saveData/);
+assert.match(warmup, /await module\.preloadOceanExperience\(\)/, "100 and route readiness follow parsed cache completion");
+assert.match(warmup, /await module\.prepareOceanEntryWorld\(environment\)/, "parsed cache alone does not certify the first complete world frame");
+assert.match(read("src/components/ocean/OceanAssetPreloader.tsx"), /document\.createDocumentFragment\(\)/);
 const display = ast("src/App.tsx").statements.find((statement) => ts.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) => declaration.name.getText() === "DisplayedViewport"));
 assert.match(display.getText(), /useLayoutEffect\(/, "resume follows displayed location before paint, not requested destination");
 assert.match(display.getText(), /data-render-active/);
@@ -104,11 +118,13 @@ assert.match(read("src/components/SkyOceanBackground.tsx"), /frameloop=\{active 
 assert.match(read("src/components/SkyOceanBackground.tsx"), /document\.addEventListener\("visibilitychange", sync\)/);
 assert.doesNotMatch(read("src/pages/OceanPage.tsx"), /\.unmount\(/, "navigation retains the world/context/assets");
 assert.match(read("src/pages/OceanPage.tsx"), /duration: 3000, delay: 1500/, "ocean intro retains the historical 3s reveal plus 1.5s anticipation");
-assert.match(read("src/pages/OceanPage.tsx"), /layout="position"/, "About layout animation remains intact");
+assert.match(read("src/pages/OceanPage.tsx"), /layout="position"/, "the centered intro retains its existing positional spring");
+assert.doesNotMatch(read("src/pages/OceanPage.tsx"), /labels\.(?:about|music)|ocean-about|ocean-music|open\.spotify/, "the retired About/Music controls are removed, not hidden behind unreachable state");
 
 // The aircraft sound keeps its decoded buffer/source, but never fetches for
 // the default figure and suspends immediately while the ocean is inactive.
 const engine = skySource.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "AircraftEngineSound").getText();
+const enginePermission = skySource.statements.find((statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "isOceanAudioActive").getText();
 const audioListeners = new Map();
 const audioEffects = [];
 const contexts = [];
@@ -126,20 +142,25 @@ class AudioContextStub {
   async close() { this.state = "closed"; }
 }
 const audio = {};
-vm.runInNewContext(ts.transpileModule(`${helpers}\n${engine}\nexports.mount = AircraftEngineSound;`.replaceAll("import.meta.env.BASE_URL", '"/"'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
+attrs.set("data-audio-active", "1"); attrs.set("data-explore", "1");
+host.hasAttribute = (name) => attrs.has(name);
+vm.runInNewContext(ts.transpileModule(`${helpers}\n${enginePermission}\n${engine}\nexports.mount = AircraftEngineSound;`.replaceAll("import.meta.env.BASE_URL", '"/"').replaceAll("import.meta.env.DEV", "false"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, {
   exports: audio,
   document: doc,
+  playerRef: { current: null },
   useEffect: (effect) => audioEffects.push(effect),
   AudioContext: AudioContextStub,
   fetch: async (url) => { assert.equal(url, "/cessna-engine.wav"); engineFetches++; return { arrayBuffer: async () => new ArrayBuffer(0) }; },
-  window: { addEventListener: (name, callback) => audioListeners.set(name, callback), removeEventListener: (name) => audioListeners.delete(name) },
+  window: { location: { pathname: "/navigate" }, addEventListener: (name, callback) => audioListeners.set(name, callback), removeEventListener: (name) => audioListeners.delete(name) },
 });
 const emitAudio = (name, detail) => audioListeners.get(name)?.({ detail });
 const flushAudio = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
 audio.mount();
 const disposeAudio = audioEffects[0]();
 assert.equal(engineFetches, 0);
+assert.equal(contexts.length, 0, "preparing/mounting the world does not create an aircraft AudioContext");
 emitAudio("ocean-active-character-change", { id: "bundled:wolfy" });
+emitAudio("ocean-audio-unlock", {}); // Real Start gesture primes audio even with the default figure.
 emitAudio("explore-mode", { enabled: true });
 await flushAudio();
 assert.equal(engineFetches, 0, "the default full-quality figure does not fetch an aircraft sound");
@@ -236,4 +257,4 @@ if (process.argv.includes("--built")) {
   const bytes = [...built].reduce((total, file) => total + fs.statSync(file).size, 0);
   console.log(`PASS: built Home static closure excludes 3D/books (${built.size} JS chunks, ${bytes} raw bytes).`);
 }
-console.log("PASS: Home import isolation, intent-only preloads, hidden-ocean pause/resume and first-frame recovery, retained world/audio, historical Ocean intro timing, and finite/disabled splash RAF.");
+console.log("PASS: Home import isolation, guarded idle/explicit-intent cache preparation, persistent conditional loading portal, hidden-ocean pause/resume and first-frame recovery, retained world/audio, historical Ocean intro timing, and finite/disabled splash RAF.");

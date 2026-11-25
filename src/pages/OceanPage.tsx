@@ -1,8 +1,8 @@
-import { Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import SkyOceanBackground, { preloadOceanAssets } from "@/components/SkyOceanBackground";
+import { preloadOceanAssets } from "@/components/SkyOceanBackground";
+import { activateOceanWorld, cancelOceanWorldPreparation, prepareOceanWorld, updateOceanWorldEnvironment } from "@/components/ocean/oceanWorldHost";
 import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditControl";
 import { listPublishedCharacters } from "@/services/characterRepository";
 import type { Character3D } from "@/types/characters3d";
@@ -55,17 +55,16 @@ export default function OceanPage() {
   const labels = normalizeOceanLabels(content.ocean_labels);
   const updateLabel = (key: keyof OceanLabels, value: string) => update({ ocean_labels: { ...labels, [key]: value } });
   const environment = useMemo(() => normalizeOceanEnvironment(content.ocean_environment), [content.ocean_environment]);
+  const entryEnvironment = useRef(environment);
   const reduced = useReducedMotion();
   const [submerged, setSubmerged] = useState(() => document.getElementById("global-sky-ocean-bg")?.getAttribute("data-underwater") === "1");
   const [ready, setReady] = useState(false);
   const [exiting, setExiting] = useState(false);
   const [started, setStarted] = useState(false);
   const [introClosing, setIntroClosing] = useState(false);
-  const [about, setAbout] = useState(false);
-  const [aboutExpanded, setAboutExpanded] = useState(false);
-  const [aboutHeight, setAboutHeight] = useState(0);
   const [figuresOpen, setFiguresOpen] = useState(false);
-  const [musicOpen, setMusicOpen] = useState(false);
+  const [cameraState, setCameraState] = useState({ detached: false, returning: false });
+  const [activeCharacterKind, setActiveCharacterKind] = useState<"avatar" | "aircraft" | "ship">("avatar");
   const [characters, setCharacters] = useState<Character3D[]>([]);
   const [characterError, setCharacterError] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character3D | null>(null);
@@ -74,12 +73,9 @@ export default function OceanPage() {
   const aperture = useRef<Animation | null>(null);
   const exitingRef = useRef(false);
   const startTimer = useRef<ReturnType<typeof setTimeout>>();
-  const joystickStart = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const aboutMeasure = useRef<HTMLDivElement>(null);
+  const joystickStart = useRef<{ x: number; y: number; moved: boolean; pointerId: number } | null>(null);
   const mask = `ocean-aperture-${useId().replace(/:/g, "")}`;
-  const aboutId = useId();
   const figuresId = useId();
-  const musicId = useId();
 
   useEffect(() => {
     const depth = (event: Event) => setSubmerged(Boolean((event as CustomEvent<{ underwater: boolean }>).detail.underwater));
@@ -88,46 +84,55 @@ export default function OceanPage() {
   }, []);
 
   useEffect(() => {
-    if (editing || (!figuresOpen && !musicOpen)) return;
+    const release = () => {
+      if (!joystickStart.current) return;
+      joystickStart.current = null; setKnob({ x: 0, y: 0 });
+      send("explore-joystick-contact", { active: false });
+      send("explore-joystick", { x: 0, z: 0 });
+    };
+    const visibility = () => { if (document.hidden) release(); };
+    window.addEventListener("blur", release); document.addEventListener("visibilitychange", visibility);
+    return () => { window.removeEventListener("blur", release); document.removeEventListener("visibilitychange", visibility); release(); };
+  }, []);
+
+  useEffect(() => {
+    if (editing || !figuresOpen) return;
     const dismiss = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-ocean-panel], [data-ocean-panel-toggle]")) return;
-      setFiguresOpen(false); setMusicOpen(false);
+      setFiguresOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setFiguresOpen(false); setMusicOpen(false); }
+      if (event.key === "Escape") setFiguresOpen(false);
     };
     document.addEventListener("pointerdown", dismiss, true);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", dismiss, true); document.removeEventListener("keydown", escape); };
-  }, [editing, figuresOpen, musicOpen]);
-
-  useLayoutEffect(() => {
-    const element = aboutMeasure.current;
-    if (!element) return;
-    // Measure the untransformed copy, even while its reserved space is closed.
-    // Keeping it mounted lets the text finish its scale-out before the group
-    // springs back to its compact, vertically centered layout.
-    const measure = () => setAboutHeight(element.offsetHeight);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [ready, editing, content.ocean_about]);
+  }, [editing, figuresOpen]);
 
   useEffect(() => {
-    preloadOceanAssets();
-    const global = window as typeof window & { __GLOBAL_SKY_OCEAN_BG_ROOT__?: Root };
-    let host = document.getElementById("global-sky-ocean-bg");
-    if (!global.__GLOBAL_SKY_OCEAN_BG_ROOT__) {
-      host = host ?? document.createElement("div");
-      host.id = "global-sky-ocean-bg";
-      Object.assign(host.style, { position: "fixed", inset: "0", zIndex: "0", pointerEvents: "none" });
-      host.setAttribute("data-render-active", "1");
-      if (!host.isConnected) document.body.prepend(host);
-      global.__GLOBAL_SKY_OCEAN_BG_ROOT__ = createRoot(host);
-      global.__GLOBAL_SKY_OCEAN_BG_ROOT__.render(<Suspense fallback={null}><SkyOceanBackground /></Suspense>);
-    }
-    if (host) { host.style.display = "block"; host.setAttribute("data-render-active", "1"); host.setAttribute("data-audio-active", "1"); }
+    const updateCamera = (event: Event) => {
+      const state = (event as CustomEvent<{ detached: boolean; returning: boolean }>).detail;
+      setCameraState({ detached: Boolean(state.detached), returning: Boolean(state.returning) });
+    };
+    window.addEventListener("ocean-camera-state", updateCamera);
+    send("ocean-camera-state-request");
+    return () => window.removeEventListener("ocean-camera-state", updateCamera);
+  }, []);
+
+  useEffect(() => {
+    const updateCharacter = (event: Event) => {
+      const kind = (event as CustomEvent<{ id: string; kind: string }>).detail.kind;
+      setActiveCharacterKind(kind === "ship" || kind === "aircraft" ? kind : "avatar");
+    };
+    window.addEventListener("ocean-active-character-change", updateCharacter);
+    // The retained world may already be using a ship when this page remounts.
+    send("ocean-active-character-state-request");
+    return () => window.removeEventListener("ocean-active-character-change", updateCharacter);
+  }, []);
+
+  useEffect(() => {
+    void preloadOceanAssets().catch(() => undefined);
+    activateOceanWorld(entryEnvironment.current);
     send("skyocean-render", { active: true });
     send("skyocean-audio", { active: true });
     return () => {
@@ -168,6 +173,7 @@ export default function OceanPage() {
       clearTimeout(startTimer.current);
       startTimer.current = undefined;
       joystickStart.current = null;
+      send("explore-joystick-contact", { active: false });
       setKnob({ x: 0, y: 0 });
       document.getElementById("global-sky-ocean-bg")?.setAttribute("data-explore", "0");
       send("explore-mode", { enabled: false });
@@ -232,6 +238,7 @@ export default function OceanPage() {
 
   const start = () => {
     if (!ready || editing || introClosing || exitingRef.current) return;
+    send("ocean-audio-unlock");
     send("skyocean-audio", { active: true });
     setIntroClosing(true);
     startTimer.current = setTimeout(() => {
@@ -242,7 +249,7 @@ export default function OceanPage() {
   };
   const stopJoystick = (allowJump = true) => {
     if (allowJump && !exitingRef.current && joystickStart.current && !joystickStart.current.moved) send("explore-jump");
-    joystickStart.current = null; setKnob({ x: 0, y: 0 }); send("explore-joystick", { x: 0, z: 0 });
+    joystickStart.current = null; setKnob({ x: 0, y: 0 }); send("explore-joystick-contact", { active: false }); send("explore-joystick", { x: 0, z: 0 });
   };
   const hold = (event: React.PointerEvent<HTMLButtonElement>, y: number) => { if (exitingRef.current) return; event.currentTarget.setPointerCapture(event.pointerId); send("explore-vertical", { y }); };
 
@@ -257,11 +264,7 @@ export default function OceanPage() {
           <div className="ocean-intro-actions">{editing ? <>
             <OceanInlineText action label="Testo pulsante Exit" value={labels.exit} disabled={saving} onChange={(value) => updateLabel("exit", value)} />
             <OceanInlineText action label="Testo pulsante start" value={labels.start} disabled={saving} onChange={(value) => updateLabel("start", value)} />
-            <OceanInlineText action label="Testo pulsante about" value={labels.about} disabled={saving} onChange={(value) => updateLabel("about", value)} />
-          </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.start.trim() || DEFAULT_OCEAN_LABELS.start} onClick={start}>{labels.start}</button><button aria-label={labels.about.trim() || DEFAULT_OCEAN_LABELS.about} aria-expanded={about} aria-controls={aboutId} onClick={() => { if (about) setAbout(false); else { setAboutExpanded(true); setAbout(true); } }}>{labels.about}</button></>}</div>
-            <motion.div id={aboutId} className="ocean-about-reveal" initial={false} animate={{ height: editing ? "auto" : aboutExpanded ? aboutHeight : 0 }} transition={reduced ? { duration: 0 } : introSpring} aria-hidden={!editing && !about}>
-              <div ref={aboutMeasure} className="ocean-about-measure"><motion.p className="ocean-about" initial={false} animate={{ scale: editing || about ? 1 : 0 }} transition={reduced ? { duration: 0 } : introSpring} onAnimationComplete={() => { if (!about && !editing) setAboutExpanded(false); }}>{editing ? <OceanInlineText multiline label="Testo Ocean" value={content.ocean_about ?? ""} disabled={saving} onChange={(value) => update({ ocean_about: value })} /> : content.ocean_about ?? "Uno spazio da attraversare, fra cielo e mare."}</motion.p></div>
-            </motion.div>
+          </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.start.trim() || DEFAULT_OCEAN_LABELS.start} onClick={start}>{labels.start}</button></>}</div>
           {editing && <p className="ocean-edit-hint" role="status">Modifica i testi sottolineati · Salva o Annulla per tornare alla navigazione.</p>}
         </motion.div>
       </div>}
@@ -269,16 +272,14 @@ export default function OceanPage() {
         <div data-ocean-control data-blossom className="ocean-tools blossom">{editing ? <>
           <OceanInlineText action label="Testo Exit nella navigazione" value={labels.exit} disabled={saving} onChange={(value) => updateLabel("exit", value)} />
           <OceanInlineText action label="Testo pulsante figura" value={labels.figure} disabled={saving} onChange={(value) => updateLabel("figure", value)} />
-          <OceanInlineText action label="Testo pulsante musica" value={labels.music} disabled={saving} onChange={(value) => updateLabel("music", value)} />
-        </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.figure.trim() || DEFAULT_OCEAN_LABELS.figure} data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => { setFiguresOpen((current) => !current); setMusicOpen(false); }}>{labels.figure}</button><button aria-label={labels.music.trim() || DEFAULT_OCEAN_LABELS.music} data-ocean-panel-toggle aria-expanded={musicOpen} aria-controls={musicId} onClick={() => { setMusicOpen((current) => !current); setFiguresOpen(false); }}>{labels.music}</button></>}</div>
+        </> : <><button aria-label={labels.exit.trim() || DEFAULT_OCEAN_LABELS.exit} onClick={() => navigate("/")}>{labels.exit}</button><button aria-label={labels.figure.trim() || DEFAULT_OCEAN_LABELS.figure} data-ocean-panel-toggle aria-expanded={figuresOpen} aria-controls={figuresId} onClick={() => setFiguresOpen((current) => !current)}>{labels.figure}</button>{started && cameraState.detached && <button aria-label="Riporta la camera dietro la figura" disabled={cameraState.returning} onClick={() => send("ocean-camera-return")}>Re-Center</button>}{started && activeCharacterKind === "ship" && <button aria-label="Riporta la nave in superficie" onClick={() => { if (exitingRef.current) return; send("ocean-audio-unlock"); send("ocean-ship-surface"); }}>Surface</button>}</>}</div>
         {!editing && <>
         <AnimatePresence>
           {figuresOpen && <motion.section key="figures" id={figuresId} data-ocean-control data-ocean-panel className="ocean-figures" aria-label="Figure del mondo" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}>{characterError && <p role="status">{labels.figuresUnavailable}</p>}{!characters.length && !characterError && <p>{labels.loadingFigures}</p>}{characters.map((character) => <button key={character.id} onClick={() => { setSelectedCharacter(character); setFiguresOpen(false); }}>{character.name}</button>)}</motion.section>}
-          {musicOpen && <motion.div key="music" id={musicId} data-ocean-control data-ocean-panel className="ocean-music" initial={{ y: 36 }} animate={{ y: 0 }} exit={{ y: 36 }} transition={reduced ? { duration: 0 } : introSpring}><iframe title="Musica di Studier Zimmer" src="https://open.spotify.com/embed/playlist/5Z63kqzOn4CzWqazejJZEv?utm_source=generator" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy" /></motion.div>}
         </AnimatePresence>
         <div data-ocean-control data-blossom className="ocean-movement blossom">
           <button className="ocean-movement-descend" aria-label="Scendi" onPointerDown={(event) => hold(event, -1)} onPointerUp={() => send("explore-vertical", { y: 0 })} onPointerCancel={() => send("explore-vertical", { y: 0 })} onLostPointerCapture={() => send("explore-vertical", { y: 0 })}>↓</button>
-          <div role="button" aria-label="Muovi la figura; tocca per saltare" tabIndex={0} className="ocean-joystick" onKeyDown={(event) => { if (event.key === "Enter") send("explore-jump"); }} onPointerDown={(event) => { if (exitingRef.current) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); joystickStart.current = { x: event.clientX, y: event.clientY, moved: false }; }} onPointerMove={(event) => { const origin = joystickStart.current; if (!origin || exitingRef.current) return; const dx = event.clientX - origin.x; const dy = event.clientY - origin.y; if (Math.hypot(dx, dy) > 5) origin.moved = true; const distance = Math.max(1, Math.hypot(dx, dy) / 32); const x = dx / distance; const y = dy / distance; setKnob({ x, y }); send("explore-joystick", { x: x / 32, z: -y / 32 }); }} onPointerUp={() => stopJoystick()} onPointerCancel={() => stopJoystick(false)} onLostPointerCapture={() => stopJoystick(false)}><span style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} /></div>
+          <div role="button" aria-label="Muovi la figura; tocca per saltare" tabIndex={0} className="ocean-joystick" onKeyDown={(event) => { if (event.key === "Enter") send("explore-jump"); }} onPointerDown={(event) => { if (exitingRef.current || joystickStart.current) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); joystickStart.current = { x: event.clientX, y: event.clientY, moved: false, pointerId: event.pointerId }; send("explore-joystick-contact", { active: true, pointerId: event.pointerId }); }} onPointerMove={(event) => { const origin = joystickStart.current; if (!origin || origin.pointerId !== event.pointerId || exitingRef.current) return; const dx = event.clientX - origin.x; const dy = event.clientY - origin.y; if (Math.hypot(dx, dy) > 5) origin.moved = true; const distance = Math.max(1, Math.hypot(dx, dy) / 32); const x = dx / distance; const y = dy / distance; setKnob({ x, y }); send("explore-joystick", { x: x / 32, z: -y / 32 }); }} onPointerUp={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(); }} onPointerCancel={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }} onLostPointerCapture={(event) => { if (joystickStart.current?.pointerId === event.pointerId) stopJoystick(false); }}><span style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} /></div>
           <button className="ocean-movement-ascend" aria-label="Sali" onPointerDown={(event) => hold(event, 1)} onPointerUp={() => send("explore-vertical", { y: 0 })} onPointerCancel={() => send("explore-vertical", { y: 0 })} onLostPointerCapture={() => send("explore-vertical", { y: 0 })}>↑</button>
           <button className="ocean-movement-roll-left" aria-label="Ruota a sinistra" onClick={() => send("explore-roll-step", { direction: -1 })}>↶</button><button className="ocean-movement-roll-right" aria-label="Ruota a destra" onClick={() => send("explore-roll-step", { direction: 1 })}>↷</button>
         </div>
@@ -288,7 +289,15 @@ export default function OceanPage() {
   );
 }
 
-/** Triggered by navigation intent, never by the initial home module graph. */
-export function preloadOceanExperience(): void {
-  preloadOceanAssets();
+/** Asset-only preparation: never mounts the world, starts audio or the intro. */
+// eslint-disable-next-line react-refresh/only-export-components -- Public imperative preload API consumed before this route mounts.
+export function preloadOceanExperience(): Promise<void> {
+  return preloadOceanAssets();
 }
+
+// eslint-disable-next-line react-refresh/only-export-components -- Explicit-entry preparation, never used by idle background warmup.
+export function prepareOceanEntryWorld(environment?: unknown): Promise<boolean> { return prepareOceanWorld(environment); }
+// eslint-disable-next-line react-refresh/only-export-components -- Cancels only hidden preparation, not the displayed Ocean exit.
+export function cancelOceanEntryWorld(): void { cancelOceanWorldPreparation(); }
+// eslint-disable-next-line react-refresh/only-export-components -- Saved settings must precede the first complete hidden frame.
+export function updatePreparedOceanEnvironment(environment?: unknown): void { updateOceanWorldEnvironment(environment); }

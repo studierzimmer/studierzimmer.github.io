@@ -240,7 +240,7 @@ function homeFixture({ available = false, editing = false, seen = true, featured
   const require = (id) => {
     if (id === "react") return {
       useState(initial) { const index = stateIndex++; if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial; return [slots[index], (value) => { slots[index] = typeof value === "function" ? value(slots[index]) : value; }]; },
-      useRef(current) { return refs[refIndex++] ??= { current }; }, useCallback: (callback) => callback,
+      useRef(current) { return refs[refIndex++] ??= { current }; }, useCallback: (callback) => callback, useEffect() {},
     };
     if (id === "react/jsx-runtime") return jsx;
     if (id === "react-router-dom") return { useNavigate: () => (path) => navigations.push(path) };
@@ -248,6 +248,7 @@ function homeFixture({ available = false, editing = false, seen = true, featured
     if (id === "@/components/LoadingLogo") return { default: "LoadingLogo" };
     if (id === "@/hooks/useSiteContent") return { useSiteContent: () => ({ loading: false }), usePublishedFeaturedAvailability: (enabled) => { enableCalls.push(enabled); return available; } };
     if (id === "@/lib/siteMenu") return helpers[id];
+    if (id === "@/lib/oceanPreload") return { scheduleOceanPreload: () => () => {}, preloadOceanExperience: async () => {} };
     if (id === "@/services/siteContentRepository") return { uploadSiteAsset: () => forbidden("upload an asset from Home rendering") };
     if (id === "@/components/books/bookSession") return { BOOK_INTRO_RETURN_KEY: "book-intro" };
     if (id.endsWith(".gif")) return { default: "/default-logo.gif" };

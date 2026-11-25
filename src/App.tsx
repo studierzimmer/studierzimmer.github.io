@@ -22,12 +22,14 @@ import {
 import AnalyticsConsent from "@/components/privacy/AnalyticsConsent";
 import PortfolioHome from "@/pages/PortfolioHome";
 import type { ModelCategory } from "@/types/siteContent";
-import { InlineSiteEditingProvider } from "@/components/SiteEditControl";
+import { InlineSiteEditingProvider, useInlineSiteEditing } from "@/components/SiteEditControl";
 import RouteChoreography from "@/components/navigation/RouteChoreography";
+import { loadPreparedOceanPage, preloadOceanExperience, setOceanPreloadEnvironment, setOceanPreloadIntent } from "@/lib/oceanPreload";
+import OceanLoadingOverlay from "@/components/ocean/OceanLoadingOverlay";
 
 const AdminPortal = lazy(() => import("@/components/admin/AdminPortal"));
 const PublicBookLibrary = lazy(() => import("@/components/books/PublicBookLibrary"));
-const loadOceanPage = () => import("./pages/OceanPage");
+const loadOceanPage = loadPreparedOceanPage;
 const Index = lazy(loadOceanPage);
 const Menu = lazy(() => import("./pages/Archive"));
 const Object01 = lazy(() => import("./pages/object01"));
@@ -179,12 +181,15 @@ const DisplayedViewport = ({ location }: { location: Location }) => {
 
 const AppViewport = () => {
   const destination = useLocation();
+  const navigate = useNavigate();
+  const inline = useInlineSiteEditing();
   useEffect(() => {
-    // Warm full-resolution ocean assets only after an explicit navigation
-    // request, while the outgoing menu finishes its existing choreography.
-    if (destination.pathname === "/navigate") void loadOceanPage().then((module) => module.preloadOceanExperience()).catch(() => undefined);
-  }, [destination.pathname]);
-  return <RouteChoreography>{(location) => <DisplayedViewport location={location} />}</RouteChoreography>;
+    const ocean = destination.pathname === "/navigate";
+    setOceanPreloadIntent(ocean);
+    if (!inline.loading) setOceanPreloadEnvironment(inline.settings.ocean_environment);
+    if (ocean) void preloadOceanExperience({ intent: true }).catch(() => undefined);
+  }, [destination.pathname, inline.loading, inline.settings.ocean_environment]);
+  return <><RouteChoreography>{(location) => <DisplayedViewport location={location} />}</RouteChoreography><OceanLoadingOverlay active={destination.pathname === "/navigate"} onCancel={() => navigate("/")} /></>;
 };
 
 const App = () => (

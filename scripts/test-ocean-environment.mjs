@@ -145,10 +145,13 @@ function collectEffects(node) {
   ts.forEachChild(node, collectEffects);
 }
 collectEffects(pageAST);
-const hostEffect = effects.findIndex((effect) => effect.includes("createRoot(host)"));
+const hostEffect = effects.findIndex((effect) => effect.includes("activateOceanWorld(entryEnvironment.current)"));
 const publishEffect = effects.findIndex((effect) => effect.includes('setAttribute("data-ocean-environment"'));
 const apertureEffect = effects.findIndex((effect) => effect.includes("element.animate(oceanRevealFrames"));
-assert.ok(hostEffect >= 0 && publishEffect > hostEffect && apertureEffect > publishEffect, "world host creation precedes saved settings publication, which precedes the first aperture animation");
+assert.ok(hostEffect >= 0 && publishEffect > hostEffect && apertureEffect > publishEffect, "prepared world activation precedes saved settings publication, which precedes the unchanged aperture animation");
+const hostSource = read("src/components/ocean/oceanWorldHost.tsx");
+assert.ok(hostSource.indexOf("updateOceanWorldEnvironment(environment);") < hostSource.indexOf("createRoot(host)"), "saved environment is installed before even creating the world root");
+assert.match(hostSource, /oceanEnvironmentState\.current = normalized;[\s\S]*host\.setAttribute\("data-ocean-environment"/, "both original floor and water uniform readers see saved values before their first frame");
 const routeCss = read("src/styles/portfolio.css"), oceanCss = read("src/styles/ocean-page.css");
 const rule = (css, selector) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((entry) => entry[1].split(",").map((part) => part.trim()).includes(selector))?.[2] ?? "";
 for (const selector of ["#root[data-ocean-surface]", ".route-stage.is-ocean-surface", ".route-stage.is-ocean-surface > .public-display"]) assert.match(rule(routeCss, selector), /pointer-events:\s*none/, `${selector} cannot shield the separate world canvas from native pointer gestures`);

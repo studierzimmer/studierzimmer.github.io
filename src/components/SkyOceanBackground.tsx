@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import React, {
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -14,6 +15,10 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { Character3D } from "@/types/characters3d";
 import OceanEnvironmentController, { oceanEnvironmentState } from "@/components/ocean/OceanEnvironmentController";
 import { useOceanCharacterCamera } from "@/components/ocean/useOceanCharacterCamera";
+import { bindOceanMovementKeys, bindOceanTouchSprint, oceanMovementKind, oceanMovementSpeed, type OceanMovementKind } from "@/components/ocean/oceanMovement";
+import { createShipSurfaceMotion } from "@/components/ocean/oceanShipSurface";
+import { shipFloatingHeight, shipWaterlineOffset } from "@/components/ocean/shipWaterline";
+import { setOceanCriticalSceneMounted } from "@/components/ocean/oceanWorldReady";
 
 const keys: Record<string, boolean> = {};
 
@@ -21,6 +26,16 @@ function isOceanRenderActive(): boolean {
   if (typeof document === "undefined" || document.hidden || document.visibilityState === "hidden") return false;
   const host = document.getElementById("global-sky-ocean-bg");
   return Boolean(host && host.style.display !== "none" && host.getAttribute("data-render-active") === "1");
+}
+
+function isOceanInputActive(): boolean {
+  const host = document.getElementById("global-sky-ocean-bg");
+  return isOceanRenderActive() && host?.getAttribute("data-explore") === "1" && !host.hasAttribute("data-ocean-preparing");
+}
+
+function isOceanAudioActive(): boolean {
+  const host = document.getElementById("global-sky-ocean-bg");
+  return isOceanRenderActive() && window.location.pathname === "/navigate" && host?.getAttribute("data-audio-active") === "1" && !host.hasAttribute("data-ocean-preparing");
 }
 
 function setOceanFrameloop(state: RootState | null, active: boolean, elapsed: { current: number }): void {
@@ -69,6 +84,8 @@ const characterAssetCache = new Map<string, LoadedCharacterAsset>();
 
 type ActiveCharacter = {
   id: string;
+  kind: OceanMovementKind;
+  waterlineOffset: THREE.Vector3 | null;
   scene: THREE.Group;
   animations: THREE.AnimationClip[];
   modelScale: number;
@@ -965,7 +982,7 @@ function CharacterSurfaceWake() {
       const speed = Number(player.userData.speed) || 0;
       const touchesWater =
         minimumY < SEA_LEVEL_Y + 4 && maximumY > SEA_LEVEL_Y - 4;
-      const isShip = String(player.userData.characterId ?? "").includes(
+      const isShip = player.userData.characterKind === "ship" || String(player.userData.characterId ?? "").includes(
         "pirate-sailing-ship"
       );
       const heading = new THREE.Vector3(
@@ -1678,7 +1695,7 @@ function prepareCharacter(
   character: Pick<
     Character3D,
     "id" | "model_scale" | "camera_distance"
-  >,
+  > & Partial<Pick<Character3D, "bundled_path" | "file_name" | "public_url">>,
   sourceScene: THREE.Group,
   animations: THREE.AnimationClip[],
   causticsMap: THREE.Texture
@@ -1733,8 +1750,11 @@ function prepareCharacter(
     : bounds.getCenter(new THREE.Vector3());
   const renderedSize = size.multiplyScalar(scale);
 
+  const kind = oceanMovementKind(character);
   return {
     id: character.id,
+    kind,
+    waterlineOffset: kind === "ship" ? shipWaterlineOffset(clone, scale) : null,
     scene: clone,
     animations,
     modelScale: scale,
@@ -1803,6 +1823,7 @@ function Player() {
   const flagTrailRef = useRef(0.18);
   const flagPhaseRef = useRef(0);
   const engineTelemetryElapsed = useRef(0);
+  const shipSurface = useMemo(createShipSurfaceMotion, []);
   const initialTransform = useMemo(() => readPlayerSessionTransform(), []);
   const initialRoll =
     Math.round(initialTransform.rotationZ / (Math.PI / 2)) *
@@ -1835,16 +1856,15 @@ function Player() {
     }),
     [activeCharacter]
   );
+  const currentGroundY = useCallback(() => {
+    const offset = activeCharacterRef.current.waterlineOffset;
+    return offset ? shipFloatingHeight(offset, group.current?.quaternion, SEA_LEVEL_Y) : PLAYER_GROUND_Y;
+  }, []);
 
   useEffect(() => {
+    shipSurface.cancel();
     activeCharacterRef.current = activeCharacter;
     previousWaterSphereCenter.current = null;
-    window.dispatchEvent(
-      new CustomEvent("ocean-active-character-change", {
-        detail: { id: activeCharacter.id },
-      })
-    );
-
     if (group.current) {
       group.current.userData.cameraDistance = activeCharacter.cameraDistance;
       group.current.userData.cameraHeight = THREE.MathUtils.clamp(
@@ -1859,11 +1879,16 @@ function Player() {
       );
       group.current.userData.collisionRadius = activeCharacter.collisionRadius;
       group.current.userData.characterId = activeCharacter.id;
+      group.current.userData.characterKind = activeCharacter.kind;
+      group.current.userData.floatingY = currentGroundY();
       group.current.userData.renderedMinY = activeCharacter.renderedMinY;
       group.current.userData.renderedMaxY = activeCharacter.renderedMaxY;
       group.current.userData.renderedWidth = activeCharacter.renderedWidth;
       group.current.userData.renderedLength = activeCharacter.renderedLength;
     }
+    window.dispatchEvent(new CustomEvent("ocean-active-character-change", {
+      detail: { id: activeCharacter.id, kind: activeCharacter.kind },
+    }));
 
     const mixer = new THREE.AnimationMixer(activeCharacter.scene);
     sailMeshesRef.current = [];
@@ -1912,7 +1937,7 @@ function Player() {
       sailMeshesRef.current = [];
       flagMeshesRef.current = [];
     };
-  }, [activeCharacter]);
+  }, [activeCharacter, shipSurface, currentGroundY]);
 
   useEffect(() => {
     characterAssetCache.set(wolfyUrl, { scene, animations });
@@ -1992,12 +2017,25 @@ function Player() {
   useEffect(() => {
     const playerGroup = group.current;
     playerRef.current = playerGroup;
+    const controlsActive = () => exploreEnabled.current && isOceanInputActive();
+    const clearInput = () => {
+      shipSurface.cancel();
+      joystick.current.set(0, 0, 0);
+      verticalControl.current = 0;
+      touchSprint.current = false;
+      sprintBlend.current = 0;
+      velocity.current.set(0, 0, 0);
+      verticalVelocity.current = 0;
+    };
 
     const joy = (event: Event) => {
+      if (!controlsActive()) { joystick.current.set(0, 0, 0); return; }
       const { x, z } = (event as CustomEvent<{ x: number; z: number }>).detail;
-      joystick.current.set(x, 0, z);
+      joystick.current.set(Number.isFinite(x) ? THREE.MathUtils.clamp(x, -1, 1) : 0, 0, Number.isFinite(z) ? THREE.MathUtils.clamp(z, -1, 1) : 0);
     };
     const jump = () => {
+      if (!controlsActive()) return;
+      shipSurface.cancel();
       if (jumping.current) return;
       if (!grounded.current && !freeVerticalMovement.current) return;
       jumping.current = true;
@@ -2007,15 +2045,18 @@ function Player() {
       verticalVelocity.current = JUMP_VELOCITY;
     };
     const moveVertically = (event: Event) => {
+      if (!controlsActive()) { verticalControl.current = 0; return; }
       const { y } = (event as CustomEvent<{ y: number }>).detail;
-      verticalControl.current = THREE.MathUtils.clamp(y, -1, 1);
+      verticalControl.current = Number.isFinite(y) ? THREE.MathUtils.clamp(y, -1, 1) : 0;
       if (Math.abs(verticalControl.current) > 0.01) {
+        shipSurface.cancel();
         jumping.current = false;
         freeVerticalMovement.current = true;
         grounded.current = false;
       }
     };
     const rollByQuarterTurn = (direction: number) => {
+      if (!controlsActive() || !Number.isFinite(direction)) return;
       const currentQuarter = Math.round(
         rollTarget.current / (Math.PI / 2)
       );
@@ -2028,34 +2069,45 @@ function Player() {
       );
     };
     const rollWithKeyboard = (event: KeyboardEvent) => {
+      if (!controlsActive() || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       if (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]")) return;
       if (event.repeat) return;
-      const key = event.key.toLowerCase();
+      const key = event.code === "KeyZ" ? "z" : event.code === "KeyX" ? "x" : event.key.toLowerCase();
       if (key !== "z" && key !== "x") return;
       event.preventDefault();
       rollByQuarterTurn(key === "z" ? -1 : 1);
     };
     const setSprint = (event: Event) => {
-      touchSprint.current = (
+      touchSprint.current = controlsActive() && Boolean((
         event as CustomEvent<{ active: boolean }>
-      ).detail.active;
+      ).detail?.active);
     };
     const setExploreMode = (event: Event) => {
       exploreEnabled.current = (
         event as CustomEvent<{ enabled: boolean }>
       ).detail.enabled;
       if (!exploreEnabled.current) {
-        joystick.current.set(0, 0, 0);
-        verticalControl.current = 0;
+        clearInput();
         jumping.current = false;
         const atGround =
-          Math.abs(group.current.position.y - PLAYER_GROUND_Y) < 0.1;
+          Math.abs(group.current.position.y - currentGroundY()) < 0.1;
         grounded.current = atGround;
         freeVerticalMovement.current = !atGround;
-        touchSprint.current = false;
-        sprintBlend.current = 0;
         writePlayerSessionTransform(group.current);
       }
+    };
+    const visibility = () => { if (document.hidden || !isOceanInputActive()) clearInput(); };
+    const surfaceShip = () => {
+      if (!controlsActive()) return;
+      const floatingY = currentGroundY();
+      const contactHeight = Math.max(floatingY, SEA_LEVEL_Y - (Number(group.current.userData.renderedMinY) || 0));
+      if (!shipSurface.start(activeCharacterRef.current.kind, group.current.position.y, floatingY, contactHeight)) return;
+      verticalControl.current = 0; verticalVelocity.current = 0;
+      jumping.current = false; grounded.current = false; freeVerticalMovement.current = true;
+    };
+    const publishActiveCharacter = () => {
+      const current = activeCharacterRef.current;
+      window.dispatchEvent(new CustomEvent("ocean-active-character-change", { detail: { id: current.id, kind: current.kind } }));
     };
 
     window.addEventListener("explore-joystick", joy);
@@ -2065,6 +2117,10 @@ function Player() {
     window.addEventListener("keydown", rollWithKeyboard);
     window.addEventListener("explore-sprint", setSprint);
     window.addEventListener("explore-mode", setExploreMode);
+    window.addEventListener("ocean-ship-surface", surfaceShip);
+    window.addEventListener("ocean-active-character-state-request", publishActiveCharacter);
+    window.addEventListener("blur", clearInput);
+    document.addEventListener("visibilitychange", visibility);
     exploreEnabled.current =
       document
         .getElementById("global-sky-ocean-bg")
@@ -2078,16 +2134,22 @@ function Player() {
       window.removeEventListener("keydown", rollWithKeyboard);
       window.removeEventListener("explore-sprint", setSprint);
       window.removeEventListener("explore-mode", setExploreMode);
+      window.removeEventListener("ocean-ship-surface", surfaceShip);
+      window.removeEventListener("ocean-active-character-state-request", publishActiveCharacter);
+      window.removeEventListener("blur", clearInput);
+      document.removeEventListener("visibilitychange", visibility);
+      clearInput();
       writePlayerSessionTransform(playerGroup);
       if (playerRef.current === playerGroup) {
         playerRef.current = null;
       }
     };
-  }, []);
+  }, [shipSurface, currentGroundY]);
 
-  useFrame((state, delta) => {
-    mixerRef.current?.update(Math.min(delta, 0.05));
-    if (!group.current || !exploreEnabled.current) return;
+  useFrame((state, frameDelta) => {
+    const delta = THREE.MathUtils.clamp(frameDelta, 0, 0.05);
+    mixerRef.current?.update(delta);
+    if (!group.current || !exploreEnabled.current || !isOceanInputActive()) return;
 
     const input = new THREE.Vector3(
       joystick.current.x +
@@ -2122,15 +2184,14 @@ function Player() {
       .addScaledVector(cameraRight, input.x);
 
     if (move.lengthSq() > 0.0001) move.normalize();
-    const isCessna =
-      activeCharacterRef.current.id.includes("cessna-aircraft");
-    const maximumMovementSpeed = isCessna ? 906.25 : 265;
-    const movementSpeed = isCessna
-      ? 125 * (1 + sprintBlend.current * 6.25)
-      : 100 * (1 + sprintBlend.current * 1.65);
+    const movementKind = activeCharacterRef.current.kind;
+    const maximumMovementSpeed = oceanMovementSpeed(movementKind, 1);
+    const movementSpeed = oceanMovementSpeed(movementKind, sprintBlend.current);
     velocity.current.lerp(move.multiplyScalar(movementSpeed), delta * 6);
+    const keyboardVertical = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
+    const verticalInput = THREE.MathUtils.clamp(keyboardVertical + verticalControl.current, -1, 1);
     const movementThrottle = THREE.MathUtils.clamp(
-      velocity.current.length() / maximumMovementSpeed,
+      Math.max(velocity.current.length() / maximumMovementSpeed, Math.abs(verticalInput) * oceanMovementSpeed(movementKind, sprintBlend.current, true) / oceanMovementSpeed(movementKind, 1, true)),
       0,
       1
     );
@@ -2192,13 +2253,6 @@ function Player() {
     const nextPosition = group.current.position
       .clone()
       .addScaledVector(velocity.current, delta);
-    const keyboardVertical =
-      (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
-    const verticalInput = THREE.MathUtils.clamp(
-      keyboardVertical + verticalControl.current,
-      -1,
-      1
-    );
     const rollDifference = rollTarget.current - group.current.rotation.z;
     if (Math.abs(rollDifference) > 0.0001) {
       group.current.rotation.z +=
@@ -2207,17 +2261,21 @@ function Player() {
       group.current.rotation.z = rollTarget.current;
     }
     if (Math.abs(verticalInput) > 0.01) {
+      shipSurface.cancel();
       jumping.current = false;
       freeVerticalMovement.current = true;
       grounded.current = false;
     }
 
-    if (jumping.current) {
+    const surfaceStep = shipSurface.step(delta);
+    if (surfaceStep) {
+      nextPosition.y = surfaceStep.height;
+      verticalVelocity.current = surfaceStep.velocity;
+      if (!surfaceStep.active) { grounded.current = true; freeVerticalMovement.current = false; }
+    } else if (jumping.current) {
       verticalVelocity.current -= JUMP_GRAVITY * Math.min(delta, 0.05);
     } else if (freeVerticalMovement.current) {
-      const verticalSpeed = isCessna
-        ? 72 * (1 + sprintBlend.current * 4.4)
-        : 58 * (1 + sprintBlend.current * 1.2);
+      const verticalSpeed = oceanMovementSpeed(movementKind, sprintBlend.current, true);
       verticalVelocity.current = THREE.MathUtils.damp(
         verticalVelocity.current,
         verticalInput * verticalSpeed,
@@ -2227,18 +2285,18 @@ function Player() {
     } else {
       verticalVelocity.current -= JUMP_GRAVITY * Math.min(delta, 0.05);
     }
-    nextPosition.y += verticalVelocity.current * Math.min(delta, 0.05);
+    if (!surfaceStep) nextPosition.y += verticalVelocity.current * Math.min(delta, 0.05);
 
     const landingHeight = jumping.current
       ? jumpReturnY.current
-      : PLAYER_GROUND_Y;
+      : currentGroundY();
     if (!freeVerticalMovement.current && nextPosition.y <= landingHeight) {
       nextPosition.y = landingHeight;
       verticalVelocity.current = 0;
       grounded.current = true;
       jumping.current = false;
       freeVerticalMovement.current =
-        Math.abs(landingHeight - PLAYER_GROUND_Y) >= 0.1;
+        Math.abs(landingHeight - currentGroundY()) >= 0.1;
     }
     const renderedMinY = Number(group.current.userData.renderedMinY) || 0;
     const characterFloorY = Math.max(
@@ -2268,6 +2326,9 @@ function Player() {
     }
 
     group.current.position.copy(nextPosition);
+    if (surfaceStep?.contact) window.dispatchEvent(new CustomEvent("ocean-player-splash", {
+      detail: { submerging: surfaceStep.velocity < 0, surfaceReturn: true, speed: Math.abs(surfaceStep.velocity) },
+    }));
     rippleField.moveWindowTo(nextPosition.x, nextPosition.z);
 
     waterSphereOffset.current
@@ -2324,7 +2385,7 @@ function Player() {
           kind: rising ? "rise" : "dive",
         }
       );
-      window.dispatchEvent(
+      if (!surfaceStep) window.dispatchEvent(
         new CustomEvent("ocean-player-splash", {
           detail: {
             submerging: !rising,
@@ -2332,7 +2393,7 @@ function Player() {
           },
         })
       );
-      if (!rising && !jumping.current) {
+      if (!surfaceStep && !rising && !jumping.current) {
         verticalVelocity.current = Math.min(
           verticalVelocity.current,
           -72
@@ -2422,7 +2483,7 @@ function OceanSoundscape() {
     };
 
     const activate = async () => {
-      if (!isOceanRenderActive()) return;
+      if (!isOceanAudioActive()) return;
       desiredActiveRef.current = true;
 
       try {
@@ -2430,7 +2491,7 @@ function OceanSoundscape() {
           await audio.play();
         }
 
-        if (!desiredActiveRef.current || !isOceanRenderActive() || window.location.pathname !== "/navigate") {
+        if (!desiredActiveRef.current || !isOceanAudioActive()) {
           audio.pause();
           return;
         }
@@ -2451,7 +2512,7 @@ function OceanSoundscape() {
     const handleAudioState = (
       event: Event
     ) => {
-      const active = isOceanRenderActive() && window.location.pathname === "/navigate" && (event as CustomEvent<{ active: boolean }>).detail.active;
+      const active = isOceanAudioActive() && (event as CustomEvent<{ active: boolean }>).detail.active;
 
       if (active) {
         void activate();
@@ -2461,7 +2522,7 @@ function OceanSoundscape() {
     };
 
     const unlock = () => {
-      if (desiredActiveRef.current && isOceanRenderActive()) {
+      if (desiredActiveRef.current && isOceanAudioActive()) {
         void activate();
       }
     };
@@ -2469,6 +2530,7 @@ function OceanSoundscape() {
     window.addEventListener("skyocean-audio", handleAudioState);
     window.addEventListener("pointerdown", unlock, { passive: true });
     window.addEventListener("keydown", unlock);
+    window.addEventListener("ocean-audio-unlock", unlock);
 
     if (
       isOceanRenderActive() && document
@@ -2482,6 +2544,7 @@ function OceanSoundscape() {
       window.removeEventListener("skyocean-audio", handleAudioState);
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
+      window.removeEventListener("ocean-audio-unlock", unlock);
       window.cancelAnimationFrame(fadeFrame);
 
       audio.pause();
@@ -2495,133 +2558,158 @@ function OceanSoundscape() {
 function AircraftEngineSound() {
   useEffect(() => {
     let disposed = false;
-    const audioContext = new AudioContext();
-    const engineGain = audioContext.createGain();
-    engineGain.gain.value = 0;
-    engineGain.connect(audioContext.destination);
+    let audioContext: AudioContext | null = null;
+    let engineGain: GainNode | null = null;
     let bufferPromise: Promise<AudioBuffer> | null = null;
     let source: AudioBufferSourceNode | null = null;
-    let currentCharacterId = "";
+    let currentCharacterId = String(playerRef.current?.userData.characterId ?? "");
+    let currentCharacterKind = String(playerRef.current?.userData.characterKind ?? "");
     let throttle = 0;
-    let renderActive = isOceanRenderActive();
+    let unlocked = false;
+    let generation = 0;
+    let audioAllowed = isOceanAudioActive();
     let exploreActive =
       document
         .getElementById("global-sky-ocean-bg")
         ?.getAttribute("data-explore") === "1";
+    let lastError: string | null = null;
+    const diagnostic = () => {
+      if (!import.meta.env.DEV) return;
+      document.getElementById("global-sky-ocean-bg")?.setAttribute("data-ocean-engine-state", JSON.stringify({
+        character: currentCharacterId, characterKind: currentCharacterKind, context: audioContext?.state ?? "not-created", sourceReady: Boolean(source),
+        unlocked, audioAllowed, exploreActive, audioGate: isOceanAudioActive(), throttle,
+        gain: engineGain?.gain.value ?? 0, error: lastError,
+      }));
+    };
 
+    const shouldPlay = () => !disposed && audioAllowed && isOceanAudioActive() && exploreActive && (currentCharacterKind === "aircraft" || (!currentCharacterKind && currentCharacterId.includes("cessna-aircraft")));
+    const pitch = () => 0.72 + throttle * 0.7;
+    const volume = () => 0.28 + throttle * 0.22;
+    const ensureContext = () => {
+      if (audioContext) return audioContext;
+      const Context = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext || (typeof AudioContext === "function" ? AudioContext : undefined);
+      if (!Context) return null;
+      audioContext = new Context();
+      engineGain = audioContext.createGain();
+      engineGain.gain.value = 0;
+      engineGain.connect(audioContext.destination);
+      return audioContext;
+    };
+    const silence = () => {
+      if (!audioContext || !engineGain) return;
+      const now = audioContext.currentTime;
+      engineGain.gain.cancelScheduledValues(now);
+      engineGain.gain.setValueAtTime(0, now);
+      if (!isOceanAudioActive() && audioContext.state === "running") void audioContext.suspend().catch(() => undefined);
+    };
     const ensureSource = async () => {
-      if (disposed || source || !renderActive) return;
+      if (!audioContext || !engineGain || source || !shouldPlay()) return;
       // The default figure has no engine: fetch/decode this full-quality sound
       // only when an aircraft actually needs it.
       bufferPromise ??= fetch(`${import.meta.env.BASE_URL}cessna-engine.wav`)
-        .then((response) => response.arrayBuffer())
+        .then((response) => { if (response.ok === false) throw new Error("Aircraft sound unavailable."); return response.arrayBuffer(); })
         .then((buffer) => audioContext.decodeAudioData(buffer))
         .catch((error) => { bufferPromise = null; throw error; });
       const buffer = await bufferPromise;
-      if (disposed || source || audioContext.state === "closed" || !renderActive || !exploreActive || !currentCharacterId.includes("cessna-aircraft")) return;
+      if (source || audioContext.state === "closed" || !shouldPlay()) return;
       source = audioContext.createBufferSource();
       source.buffer = buffer;
       source.loop = true;
-      source.playbackRate.value = 0.82;
+      source.playbackRate.value = pitch();
       source.connect(engineGain);
       source.start();
     };
 
     const update = async () => {
       if (disposed) return;
-      const shouldPlay =
-        renderActive && exploreActive && currentCharacterId.includes("cessna-aircraft");
+      const epoch = ++generation;
+      diagnostic();
+      if (!shouldPlay()) { silence(); return; }
+      if (!unlocked || !audioContext || !engineGain) return;
+      try {
+        if (audioContext.state === "suspended") await audioContext.resume();
+        await ensureSource();
+      } catch (error) {
+        lastError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        diagnostic();
+        return; // The next real gesture can retry autoplay or a failed asset.
+      }
+      if (disposed || epoch !== generation) return;
+      if (!shouldPlay()) { silence(); return; }
       const now = audioContext.currentTime;
       engineGain.gain.cancelScheduledValues(now);
-      engineGain.gain.setValueAtTime(engineGain.gain.value, now);
-
-      if (!renderActive) {
-        engineGain.gain.setValueAtTime(0, now);
-        if (audioContext.state === "running") await audioContext.suspend().catch(() => undefined);
-        return;
-      }
-
-      if (shouldPlay) {
-        try {
-          if (audioContext.state === "suspended") await audioContext.resume();
-          await ensureSource();
-        } catch {
-          return; // A later user interaction can retry the optional sound.
-        }
-        if (disposed) return;
-        if (!renderActive || !isOceanRenderActive() || !exploreActive || !currentCharacterId.includes("cessna-aircraft")) {
-          engineGain.gain.setValueAtTime(0, audioContext.currentTime);
-          if (!renderActive && audioContext.state === "running") await audioContext.suspend().catch(() => undefined);
-          return;
-        }
-        engineGain.gain.linearRampToValueAtTime(
-          0.2 + throttle * 0.07,
-          audioContext.currentTime + 0.7
-        );
-      } else {
-        engineGain.gain.linearRampToValueAtTime(0, now + 0.55);
-      }
+      engineGain.gain.setTargetAtTime(volume(), now, 0.18);
+      lastError = null;
+      diagnostic();
     };
 
     const onCharacter = (event: Event) => {
       currentCharacterId = (
-        event as CustomEvent<{ id: string }>
-      ).detail.id;
+        event as CustomEvent<{ id: string; kind?: OceanMovementKind }>
+      ).detail?.id ?? "";
+      currentCharacterKind = (event as CustomEvent<{ kind?: OceanMovementKind }>).detail?.kind ?? "";
+      throttle = 0;
       void update();
     };
     const onExplore = (event: Event) => {
       exploreActive = (
         event as CustomEvent<{ enabled: boolean }>
-      ).detail.enabled;
+      ).detail?.enabled === true;
       void update();
     };
     const onThrottle = (event: Event) => {
-      throttle = THREE.MathUtils.clamp(
-        (event as CustomEvent<{ throttle: number }>).detail.throttle,
-        0,
-        1
-      );
-      if (!source) return;
+      const requested = (event as CustomEvent<{ throttle: number }>).detail?.throttle;
+      throttle = Number.isFinite(requested) ? Math.min(1, Math.max(0, requested)) : 0;
+      if (!source || !audioContext || !engineGain || !shouldPlay()) return;
       const now = audioContext.currentTime;
       source.playbackRate.cancelScheduledValues(now);
       source.playbackRate.setTargetAtTime(
-        0.82 + throttle * 0.52,
+        pitch(),
         now,
         throttle > 0.45 ? 0.16 : 0.28
       );
-      if (renderActive && exploreActive && currentCharacterId.includes("cessna-aircraft")) {
-        engineGain.gain.cancelScheduledValues(now);
-        engineGain.gain.setTargetAtTime(
-          0.2 + throttle * 0.07,
-          now,
-          0.22
-        );
-      }
+      engineGain.gain.cancelScheduledValues(now);
+      engineGain.gain.setTargetAtTime(volume(), now, 0.22);
+      diagnostic();
     };
     const unlock = () => {
-      void update();
+      if (disposed || !isOceanAudioActive()) return;
+      const context = ensureContext();
+      if (!context) return;
+      unlocked = true;
+      // Start normally happens with Wolfy selected. Resume NOW, inside that
+      // gesture, rather than waiting for the later Cessna selection effect.
+      const resumed = context.state === "running" ? Promise.resolve() : context.resume();
+      void resumed.then(update).catch((error) => { lastError = error instanceof Error ? `${error.name}: ${error.message}` : String(error); diagnostic(); });
     };
-    const onActivity = () => { renderActive = isOceanRenderActive(); void update(); };
+    const onActivity = () => { audioAllowed = isOceanAudioActive(); void update(); };
+    const onAudioState = (event: Event) => { audioAllowed = Boolean((event as CustomEvent<{ active: boolean }>).detail?.active) && isOceanAudioActive(); void update(); };
 
     window.addEventListener("ocean-active-character-change", onCharacter);
     window.addEventListener("explore-mode", onExplore);
     window.addEventListener("ocean-aircraft-throttle", onThrottle);
     window.addEventListener("skyocean-activity", onActivity);
+    window.addEventListener("skyocean-audio", onAudioState);
+    window.addEventListener("ocean-audio-unlock", unlock);
     window.addEventListener("pointerdown", unlock, { passive: true });
     window.addEventListener("keydown", unlock);
+    diagnostic();
 
     return () => {
       disposed = true;
+      generation++;
       window.removeEventListener("ocean-active-character-change", onCharacter);
       window.removeEventListener("explore-mode", onExplore);
       window.removeEventListener("ocean-aircraft-throttle", onThrottle);
       window.removeEventListener("skyocean-activity", onActivity);
+      window.removeEventListener("skyocean-audio", onAudioState);
+      window.removeEventListener("ocean-audio-unlock", unlock);
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
       source?.stop();
       source?.disconnect();
-      engineGain.disconnect();
-      void audioContext.close();
+      engineGain?.disconnect();
+      if (audioContext) void audioContext.close();
     };
   }, []);
 
@@ -2634,9 +2722,16 @@ function SurfaceCrossingSound() {
     audio.preload = "auto";
     audio.volume = 0.24;
     let audioContext: AudioContext | null = null;
+    const unlock = () => {
+      if (!isOceanAudioActive()) return;
+      const Context = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext || (typeof AudioContext === "function" ? AudioContext : undefined);
+      if (!Context) return;
+      audioContext ??= new Context();
+      if (audioContext.state === "suspended") void audioContext.resume().catch(() => undefined);
+    };
 
     const playCrossing = (event: Event) => {
-      if (!isOceanRenderActive()) return;
+      if (!isOceanAudioActive()) return;
       const underwater = (
         event as CustomEvent<{ underwater: boolean }>
       ).detail.underwater;
@@ -2649,14 +2744,15 @@ function SurfaceCrossingSound() {
     };
 
     const playHeavyBlop = (event: Event) => {
-      if (!isOceanRenderActive()) return;
-      const { submerging, speed } = (
+      if (!isOceanAudioActive()) return;
+      const { submerging, speed, surfaceReturn } = (
         event as CustomEvent<{
           submerging: boolean;
           speed: number;
+          surfaceReturn?: boolean;
         }>
       ).detail;
-      if (!submerging) return;
+      if (!submerging && !surfaceReturn) return;
 
       audioContext ??= new AudioContext();
       if (audioContext.state === "suspended") {
@@ -2680,18 +2776,22 @@ function SurfaceCrossingSound() {
       oscillator.stop(now + 0.46);
     };
 
-    const stopWhenInactive = () => {
-      if (isOceanRenderActive()) return;
+    const stopWhenInactive = (event: Event) => {
+      if ((event as CustomEvent<{ active?: boolean }>).detail?.active !== false && isOceanAudioActive()) return;
       audio.pause();
       audio.currentTime = 0;
       if (audioContext?.state === "running") void audioContext.suspend().catch(() => undefined);
     };
     window.addEventListener("skyocean-activity", stopWhenInactive);
+    window.addEventListener("ocean-audio-unlock", unlock);
+    window.addEventListener("skyocean-audio", stopWhenInactive);
     window.addEventListener("ocean-surface-cross", playCrossing);
     window.addEventListener("ocean-player-splash", playHeavyBlop);
     return () => {
       window.removeEventListener("ocean-surface-cross", playCrossing);
       window.removeEventListener("skyocean-activity", stopWhenInactive);
+      window.removeEventListener("ocean-audio-unlock", unlock);
+      window.removeEventListener("skyocean-audio", stopWhenInactive);
       window.removeEventListener("ocean-player-splash", playHeavyBlop);
       audio.pause();
       audio.src = "";
@@ -2701,6 +2801,14 @@ function SurfaceCrossingSound() {
     };
   }, []);
 
+  return null;
+}
+
+function OceanCriticalSceneMarker() {
+  useLayoutEffect(() => {
+    setOceanCriticalSceneMounted(true);
+    return () => setOceanCriticalSceneMounted(false);
+  }, []);
   return null;
 }
 
@@ -2746,16 +2854,9 @@ export default function SkyOceanBackground({ laboratory = false }: { laboratory?
   }, []);
 
   useEffect(() => {
-    const keyDown = (event: KeyboardEvent) => {
-      if (!isOceanRenderActive() || (event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable=true]"))) return;
-      keys[event.key.toLowerCase()] = true;
-    };
-    const keyUp = (event: KeyboardEvent) => { keys[event.key.toLowerCase()] = false; };
-    const clear = () => { Object.keys(keys).forEach((key) => { keys[key] = false; }); };
-    window.addEventListener("keydown", keyDown);
-    window.addEventListener("keyup", keyUp);
-    window.addEventListener("blur", clear);
-    return () => { window.removeEventListener("keydown", keyDown); window.removeEventListener("keyup", keyUp); window.removeEventListener("blur", clear); clear(); };
+    const releaseKeys = bindOceanMovementKeys(keys, isOceanInputActive);
+    const releaseTouch = bindOceanTouchSprint(isOceanInputActive);
+    return () => { releaseKeys(); releaseTouch(); };
   }, []);
 
   return (
@@ -2809,6 +2910,7 @@ export default function SkyOceanBackground({ laboratory = false }: { laboratory?
           <UnderwaterSurface />
           <Island />
           <Player />
+          {!laboratory && <OceanCriticalSceneMarker />}
         </Suspense>
 
         <CameraRig />
@@ -2820,10 +2922,6 @@ export default function SkyOceanBackground({ laboratory = false }: { laboratory?
   );
 }
 
-let oceanAssetsRequested = false;
-export function preloadOceanAssets(): void {
-  if (oceanAssetsRequested) return;
-  oceanAssetsRequested = true;
-  useGLTF.preload(`${import.meta.env.BASE_URL}wolfy.glb`);
-  useGLTF.preload(`${import.meta.env.BASE_URL}island.gltf`);
+export function preloadOceanAssets(): Promise<void> {
+  return import("@/components/ocean/OceanAssetPreloader").then((module) => module.prepareOceanAssetCache());
 }

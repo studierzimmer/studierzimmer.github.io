@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LoadingLogo from "@/components/LoadingLogo";
 import SiteEditControl, { useInlineSiteEditing } from "@/components/SiteEditControl";
@@ -8,6 +8,7 @@ import { BOOK_INTRO_RETURN_KEY } from "@/components/books/bookSession";
 import { uploadSiteAsset } from "@/services/siteContentRepository";
 import originalLogo from "@/Portrait/WolfyLight.gif";
 import { activeMenuItems, moveActiveMenuItem } from "@/lib/siteMenu";
+import { preloadOceanExperience, scheduleOceanPreload } from "@/lib/oceanPreload";
 import "@/styles/portfolio.css";
 
 const destinations: Record<MenuKey, string> = {
@@ -25,6 +26,7 @@ export default function PortfolioHome() {
   const [splash, setSplash] = useState(() => sessionStorage.getItem("studierzimmer:splash-seen") !== "true");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedMenu, setSelectedMenu] = useState<MenuKey | null>(null);
+  const menu = useRef<HTMLElement>(null);
   const completeSplash = useCallback(() => {
     sessionStorage.setItem("studierzimmer:splash-seen", "true");
     setSplash(false);
@@ -34,10 +36,16 @@ export default function PortfolioHome() {
   const checkFeatured = !editing && menuItems.some((item) => item.id === "featured" && item.visible);
   const featuredAvailable = usePublishedFeaturedAvailability(checkFeatured);
   const items = menuItems.filter((item) => item.visible && (editing || item.id !== "featured" || featuredAvailable !== false));
+  const oceanAvailable = items.some((item) => item.id === "navigate");
+  useEffect(() => {
+    if (splash || editing || !oceanAvailable || (checkFeatured && featuredAvailable === null)) return;
+    return scheduleOceanPreload(menu.current);
+  }, [splash, editing, oceanAvailable, checkFeatured, featuredAvailable]);
   const openSection = (key: MenuKey) => {
     if (editing) return;
     setSelectedMenu(key);
     if (key === "navigate") {
+      void preloadOceanExperience({ intent: true }).catch(() => undefined);
       sessionStorage.setItem(BOOK_INTRO_RETURN_KEY, "true");
       sessionStorage.removeItem("revealDone");
     }
@@ -55,7 +63,7 @@ export default function PortfolioHome() {
 
   return (
     <main className="portfolio-page portfolio-home">
-      <nav aria-label="Studier Zimmer" className="portfolio-menu" data-selected-menu={selectedMenu ?? undefined} style={{ fontFamily: settings.menu_font_family, fontSize: `${settings.menu_font_size}px`, letterSpacing: `${settings.menu_letter_spacing}px` }}>
+      <nav ref={menu} aria-label="Studier Zimmer" className="portfolio-menu" data-selected-menu={selectedMenu ?? undefined} style={{ fontFamily: settings.menu_font_family, fontSize: `${settings.menu_font_size}px`, letterSpacing: `${settings.menu_letter_spacing}px` }}>
         {items.map((item, index) => (
           <div key={item.id} data-menu-entry={item.id} data-blossom className="portfolio-menu-piece blossom" style={{ animationDelay: `${index * 60}ms` }}>
             {editing ? <input className={`inline-menu-title ${item.id === "navigate" ? "is-ocean-title" : ""}`} aria-label={`Titolo ${item.id}`} value={item.label} onChange={(event) => update({ menu_items: draft.menu_items.map((entry) => entry.id === item.id ? { ...entry, label: event.target.value } : entry) })} /> : <button type="button" className={`portfolio-menu-item ${item.id === "navigate" ? "is-ocean-title" : ""}`} onClick={() => openSection(item.id)}>

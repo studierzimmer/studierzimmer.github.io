@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { createOriginalWaterAdapter } from "./originalWaterAdapter";
 import { normalizeOceanEnvironment, OCEAN_ENVIRONMENT_EVENT } from "@/types/oceanEnvironment";
+import { confirmOceanWorldFrame } from "./oceanWorldReady";
 
+// eslint-disable-next-line react-refresh/only-export-components -- Shared original floor/water uniform state, not a visible refresh boundary.
 export const oceanEnvironmentState = { current: normalizeOceanEnvironment() };
 
 /** Uniform updates only; the original scene, materials and underwater stay mounted. */
@@ -33,7 +35,9 @@ export default function OceanEnvironmentController({ disabled = false }: { disab
   useFrame((state) => {
     if (!adapter.current) return;
     adapter.current.update(camera, state.clock.elapsedTime, settings.current);
+    const frame = gl.info.render.frame;
     gl.render(scene, camera);
+    if (gl.info.render.frame > frame && !gl.getContext().isContextLost()) confirmOceanWorldFrame();
   }, disabled ? 0 : 1);
   return null;
 }

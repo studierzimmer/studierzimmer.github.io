@@ -1,5 +1,5 @@
 .ocean-page { position:fixed; inset:0; z-index:10; pointer-events:none; color:#1c242b; font-family:SuisseIntl,sans-serif; transition:color 760ms ease; }
-.ocean-page button,.ocean-page input,.ocean-page textarea,.ocean-page select,.ocean-page iframe,.ocean-page .site-inline-controls { pointer-events:auto; }
+.ocean-page button,.ocean-page input,.ocean-page textarea,.ocean-page select,.ocean-page .site-inline-controls { pointer-events:auto; }
 .ocean-aperture { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
 .ocean-aperture-veil { transition:fill 700ms ease; }
 .ocean-intro { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -34,16 +34,14 @@
   .ocean-page.is-editing .ocean-tools { bottom:82px; }
   .ocean-page.is-editing .ocean-environment-editor { top:12px; right:12px; width:min(240px,calc(100vw - 80px)); max-height:calc(100dvh - 110px); }
 }
-.ocean-about-reveal { overflow:hidden; }
-.ocean-about-measure { padding-top:24px; }
-.ocean-about { font-size:14px; transform-origin:center; }
 .ocean-tools { position:fixed; z-index:3; bottom:max(160px,calc(env(safe-area-inset-bottom) + 140px)); right:22px; display:flex; flex-direction:column; pointer-events:auto; font-size:12px; }
+.ocean-tools button { border-radius:0; outline:none; box-shadow:none; }
+.ocean-tools button:focus-visible { text-decoration:underline; text-underline-offset:4px; }
 .ocean-movement { position:fixed; bottom:max(22px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); width:min(420px,calc(100vw - 24px)); display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 96px minmax(0,1fr) minmax(0,1fr); align-items:center; gap:clamp(3px,1vw,8px); pointer-events:auto; touch-action:none; color:rgb(255 255 255 / .8); }
 .ocean-movement button { grid-row:1; justify-self:center; width:44px; height:44px; min-width:44px; padding:0; border:1px solid rgb(255 255 255 / .13); border-radius:0; background:transparent; }
 .ocean-movement-descend { grid-column:2; }.ocean-movement-ascend { grid-column:4; }.ocean-movement-roll-left { grid-column:1; }.ocean-movement-roll-right { grid-column:5; }
 .ocean-joystick { grid-column:3; grid-row:1; width:96px; height:96px; border:1px solid rgb(255 255 255 / .13); border-radius:50%; position:relative; touch-action:none; }
 .ocean-joystick span { display:block; width:28px; height:28px; background:rgb(255 255 255 / .18); position:absolute; left:33px; top:33px; border-radius:50%; pointer-events:none; }
-.ocean-figures,.ocean-music { position:fixed; z-index:2; bottom:calc(max(160px,calc(env(safe-area-inset-bottom) + 140px)) + 144px); right:24px; width:min(360px,calc(100vw - 48px)); background:rgb(238 240 239 / .82); color:#343e44; border-radius:22px; padding:16px; pointer-events:auto; max-height:min(50dvh,max(80px,calc(100dvh - 340px))); overflow:auto; overscroll-behavior:contain; touch-action:pan-y; backdrop-filter:blur(12px); }
+.ocean-figures { position:fixed; z-index:2; bottom:calc(max(160px,calc(env(safe-area-inset-bottom) + 140px)) + 144px); right:24px; width:min(360px,calc(100vw - 48px)); background:rgb(238 240 239 / .82); color:#343e44; border-radius:22px; padding:16px; pointer-events:auto; max-height:min(50dvh,max(80px,calc(100dvh - 340px))); overflow:auto; overscroll-behavior:contain; touch-action:pan-y; backdrop-filter:blur(12px); }
 .ocean-figures { display:flex; flex-direction:column; font-size:13px; }.ocean-figures button { text-align:left; }
-.ocean-music iframe { border:0; border-radius:12px; width:100%; height:352px; }
 @media(max-width:480px) { .ocean-tools { right:12px; } }

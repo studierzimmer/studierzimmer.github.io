@@ -6,7 +6,7 @@ import type {
 
 const MAX_CHARACTER_BYTES = 100 * 1024 * 1024;
 const CHARACTER_URL_LIFETIME_SECONDS = 15 * 60;
-const PIRATE_SHIP_ASSET_VERSION = "20260726-15";
+const PIRATE_SHIP_ASSET_VERSION = "20261125-galleon-2";
 const CESSNA_ASSET_VERSION = "20260726-5";
 
 type CharacterRow = Omit<Character3D, "public_url" | "is_virtual">;

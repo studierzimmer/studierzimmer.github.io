@@ -155,9 +155,12 @@ function findStates(node) {
 }
 findStates(pageAST);
 let stateIndex = 0, editing = true, saving = false, stateOverrides = {}, updates = [], navigations = [];
+let pageEffects = [];
+const uiEvents = [], windowListeners = new Map(), documentListeners = new Map();
+const pageDocument = { hidden: false, getElementById: () => null, addEventListener: (name, callback) => documentListeners.set(name, callback), removeEventListener: (name) => documentListeners.delete(name) };
 const config = { ...repository("local").api.DEFAULT_SITE_SETTINGS, ocean_title: "TITOLO", ocean_subtitle: "SOTTOTITOLO", ocean_about: "TESTO", ocean_labels: custom };
 const react = {
-  useMemo: (factory) => factory(), useRef: (current) => ({ current }), useEffect() {}, useLayoutEffect() {}, useId: () => "mock-id",
+  useMemo: (factory) => factory(), useRef: (current) => ({ current }), useEffect(callback) { pageEffects.push(callback); }, useLayoutEffect() {}, useId: () => "mock-id",
   useState(initial) { const name = stateNames[stateIndex++]; return [Object.hasOwn(stateOverrides, name) ? stateOverrides[name] : typeof initial === "function" ? initial() : initial, () => {}]; },
 };
 const control = () => null;
@@ -166,15 +169,18 @@ const page = compile(pageSource, {
   "react-router-dom": { useNavigate: () => (to) => navigations.push(to) },
   "framer-motion": { AnimatePresence: "AnimatePresence", useReducedMotion: () => false, motion: new Proxy({}, { get: (_, name) => `motion.${String(name)}` }) },
   "@/components/SkyOceanBackground": { __esModule: true, default: control, preloadOceanAssets() {} },
+  "@/components/ocean/oceanWorldHost": { activateOceanWorld() {}, prepareOceanWorld: async () => true, cancelOceanWorldPreparation() {}, updateOceanWorldEnvironment() {} },
   "@/components/SiteEditControl": { __esModule: true, default: control, useInlineSiteEditing: () => ({ editing, saving, isAdmin: true, settings: config, draft: config, update: (patch) => updates.push(patch) }) },
   "@/components/ocean/OceanEnvironmentEditor": { __esModule: true, default: control },
   "@/components/ocean/OceanInlineText": { __esModule: true, default: inline },
   "@/services/characterRepository": { listPublishedCharacters() { throw new Error("No catalogue/network calls in text tests"); } },
   "@/types/oceanEnvironment": environment, "@/types/oceanText": labels,
-}, { document: { getElementById: () => null }, window: { dispatchEvent() { throw new Error("No event effects in text tests"); } } }).default;
-function render(overrides = {}) { stateIndex = 0; stateOverrides = { ready: true, started: true, ...overrides }; return walk(page()); }
+}, { document: pageDocument, window: { dispatchEvent: (event) => uiEvents.push(event), addEventListener: (name, callback) => windowListeners.set(name, callback), removeEventListener: (name) => windowListeners.delete(name) }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } }, setTimeout: () => 1, clearTimeout() {} }).default;
+function render(overrides = {}) { stateIndex = 0; pageEffects = []; stateOverrides = { ready: true, started: true, ...overrides }; return walk(page()); }
 const nodes = render(), fields = nodes.filter((node) => node.type === inline);
-for (const value of ["TITOLO", "SOTTOTITOLO", "TESTO", custom.exit, custom.figure, custom.music]) assert.ok(fields.some((node) => node.props.value === value), `${value} remains editable after Start`);
+for (const value of ["TITOLO", "SOTTOTITOLO", custom.exit, custom.figure]) assert.ok(fields.some((node) => node.props.value === value), `${value} remains editable after Start`);
+assert.equal(fields.some((node) => ["TESTO", custom.about, custom.music].includes(node.props.value)), false, "removed About/Music UI has no reachable editor actions");
+assert.equal(config.ocean_about, "TESTO"); assert.equal(config.ocean_labels.music, custom.music, "retiring public controls never deletes their saved backend fields");
 for (const field of fields) assert.equal(field.props.disabled, false);
 assert.equal(nodes.some((node) => node.type === "button" && [custom.exit, custom.figure, custom.music].includes(node.props.children)), false, "live navigation actions cannot fire while editing their labels");
 assert.equal(nodes.some((node) => String(node.props?.className).split(" ").includes("ocean-movement")), false, "editing text cannot accidentally move/jump the character");
@@ -184,10 +190,48 @@ saving = true; assert.ok(render().filter((node) => node.type === inline).every((
 editing = false;
 assert.ok(render({ started: true, figuresOpen: true, characters: [], characterError: null }).some((node) => node.type === "p" && node.props.children === custom.loadingFigures), "figure loading uses editable CMS message");
 assert.ok(render({ started: true, figuresOpen: true, characters: [], characterError: "offline" }).some((node) => node.type === "p" && node.props.children === custom.figuresUnavailable), "figure errors use editable CMS message rather than hardcoded exception text");
-const visitor = render({ started: false, about: true, aboutExpanded: true });
+const visitor = render({ started: false });
 assert.equal(visitor.some((node) => node.type === inline), false, "visitors never receive editable fields");
 assert.ok(visitor.some((node) => node.type === "button" && node.props.children === custom.start));
-config.ocean_about = "";
-const emptyAbout = render({ started: false, about: true, aboutExpanded: true }).find((node) => node.props?.className === "ocean-about");
-assert.equal(emptyAbout.props.children, "", "an intentionally blank About body never reappears from default fallback");
+assert.equal(visitor.some((node) => [custom.about, custom.music].includes(node.props?.children)), false, "visitors only see the remaining intro actions");
+const detached = render({ started: true, cameraState: { detached: true, returning: false } });
+assert.ok(detached.some((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura"));
+assert.equal(render({ started: false, cameraState: { detached: true, returning: false } }).some((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura"), false, "camera reset belongs only to active exploration");
+assert.equal(render({ started: true, cameraState: { detached: false, returning: false } }).some((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura"), false);
+assert.equal(render({ started: true, cameraState: { detached: true, returning: true } }).find((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura").props.disabled, true);
+render({ started: true, cameraState: { detached: true, returning: false } }).find((node) => node.props?.["aria-label"] === "Riporta la camera dietro la figura").props.onClick();
+assert.equal(uiEvents.at(-1).type, "ocean-camera-return");
+for (const kind of ["avatar", "aircraft"]) assert.equal(render({ started: true, activeCharacterKind: kind }).some((node) => node.type === "button" && node.props.children === "Surface"), false, `Surface is never shown for ${kind}`);
+assert.equal(render({ started: false, activeCharacterKind: "ship" }).some((node) => node.type === "button" && node.props.children === "Surface"), false, "Surface is not an intro action");
+{
+  const ship = render({ started: true, activeCharacterKind: "ship" });
+  const surface = ship.find((node) => node.type === "button" && node.props.children === "Surface");
+  assert.ok(surface); const before = uiEvents.length;
+  surface.props.onClick();
+  assert.deepEqual(uiEvents.slice(before).map((event) => event.type), ["ocean-audio-unlock", "ocean-ship-surface"], "Surface unlocks audio in the actual gesture before requesting the ship action");
+  const sync = pageEffects.find((effect) => /ocean-active-character-state-request/.test(String(effect)));
+  const cleanup = sync();
+  assert.equal(uiEvents.at(-1).type, "ocean-active-character-state-request", "a retained world's real character state is requested after subscribing");
+  assert.ok(windowListeners.has("ocean-active-character-change")); cleanup();
+  assert.equal(windowListeners.has("ocean-active-character-change"), false);
+  editing = true; assert.equal(render({ started: true, activeCharacterKind: "ship" }).some((node) => node.type === "button" && node.props.children === "Surface"), false, "editing cannot launch the surface action"); editing = false;
+}
+render({ started: false }).find((node) => node.type === "button" && node.props.children === custom.start).props.onClick();
+assert.ok(uiEvents.some((event) => event.type === "ocean-audio-unlock"), "Start unlocks audio synchronously inside the real click rather than a later timer");
+{
+  const joystick = render({ started: true }).find((node) => node.props?.className === "ocean-joystick");
+  const pointer = (pointerId) => ({ pointerId, clientX: 20, clientY: 20, preventDefault() {}, currentTarget: { setPointerCapture() {} } });
+  const contacts = () => uiEvents.filter((event) => event.type === "explore-joystick-contact");
+  const releaseEffect = pageEffects.find((effect) => /window\.addEventListener\("blur", release\)/.test(String(effect)));
+  const cleanup = releaseEffect();
+  joystick.props.onPointerDown(pointer(11));
+  assert.deepEqual(plain(contacts().at(-1).detail), { active: true, pointerId: 11 }, "touch contact exists even while joystick x/z are zero");
+  const count = contacts().length;
+  joystick.props.onPointerDown(pointer(22)); joystick.props.onPointerUp(pointer(22));
+  assert.equal(contacts().length, count, "a second pointer cannot steal/release the held joystick");
+  joystick.props.onLostPointerCapture(pointer(11)); assert.equal(contacts().at(-1).detail.active, false);
+  joystick.props.onPointerDown(pointer(33)); windowListeners.get("blur")(); assert.equal(contacts().at(-1).detail.active, false);
+  joystick.props.onPointerDown(pointer(44)); pageDocument.hidden = true; documentListeners.get("visibilitychange")(); assert.equal(contacts().at(-1).detail.active, false); pageDocument.hidden = false;
+  joystick.props.onPointerDown(pointer(55)); cleanup(); assert.equal(contacts().at(-1).detail.active, false, "unmount clears held-touch sprint ownership");
+}
 console.log("PASS: editable Ocean labels/defaults/intentional empty text; existing JSONB local+remote mock persistence with unchanged admin/RLS failures; native controlled plain-text editing without navigation; reachable fields after Start and disabled save state (no real writes/network/WebGL).");
